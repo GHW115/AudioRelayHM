@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\GHW\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BCAA7C963EE1F5FFBD575B90BBA00CDE833EC52B23F62DA6BF53D2752340C1BE394FFF1031EEC27",
+          "profile": "C:\\Users\\GHW\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\GHW\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p12",
+          "storePassword": "0000001B97EAF11771E9AFDC916FCB8AB1972F3D4356B581E5BB7F5B55C7CAC33DB51091043D342A76AF64"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.1(24)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
