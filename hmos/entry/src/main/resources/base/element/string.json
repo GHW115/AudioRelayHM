@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "AudioRelay 音频串流应用"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "AudioRelay 主界面"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "AudioRelay"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "需要网络权限以传输音频数据"
+    },
+    {
+      "name": "permission_mic_reason",
+      "value": "需要麦克风权限以捕获音频发送到电脑"
+    },
+    {
+      "name": "permission_keep_running_reason",
+      "value": "用于在后台持续传输音频"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# ===== HarmonyOS =====
+build/
+.hvigor/
+oh_modules/
+.cxx/
+local.properties
+code-linter.json5
+.appanalyzer
+.clang-tidy
+.clangd
+*.hap
+*.hsp
+*.zip
+
+# ===== Windows (.NET) =====
+bin/
+obj/
+*.user
+*.suo
+
+# ===== IDE =====
+.idea/
+*.iml
+.vs/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db

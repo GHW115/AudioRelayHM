@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "REDACTED_KEY_PASSWORD",
+          "profile": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p12",
+          "storePassword": "REDACTED_STORE_PASSWORD"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.1(24)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
