@@ -1,3 +1,8 @@
+/**
+ * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
+ */
+
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BackupExtensionAbility, BundleVersion } from '@kit.CoreFileKit';
 
