@@ -17,6 +17,8 @@ AudioRelayHM/
     └── AudioRelayWinUI.csproj
 ```
 
+> 🤖 本项目所有源码均由 AI（Claude, Anthropic）辅助生成
+
 ## 功能
 
 - **PC → 手机**：Windows 系统音频 → 手机实时播放
