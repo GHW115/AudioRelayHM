@@ -1,3 +1,6 @@
+// 🤖 AI 辅助生成 — Claude (Anthropic)
+// 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
+
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
