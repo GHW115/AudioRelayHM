@@ -4,6 +4,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Drawing.Drawing2D;
 using NAudio.Wave;
 using Concentus.Structs;
 using Concentus.Enums;
@@ -19,13 +20,12 @@ static class Program
 public class MainForm : Form
 {
     // 控件
-    private TextBox txtPort = new() { Text = "9287" };
-    private Button btnStart = new() { Text = "▶ 启动服务" };
-    private Label lblStatus = new() { Text = "● 未启动", ForeColor = Color.Red };
-    private ToggleButton btnPcToPhone = new("⬇ PC → 手机");
-    private ToggleButton btnPhoneToPc = new("⬆ 手机 → PC");
-private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
-        BackColor = Color.White, ForeColor = Color.FromArgb(0, 100, 50), Font = new("Consolas", 9) };
+    private TextBox txtPort;
+    private Button btnStart;
+    private Label lblStatus;
+    private ToggleButton btnPcToPhone;
+    private ToggleButton btnPhoneToPc;
+    private TextBox txtLog;
 
     // 服务
     private NetworkServer server = new();
@@ -35,86 +35,113 @@ private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars =
 
     public MainForm()
     {
-        // === 深色音频工作室主题 ===
-        this.Text = "AudioRelay - 鸿蒙 ↔ Windows";
-        this.Size = new Size(620, 600);
+        var BG = Color.FromArgb(15, 23, 42);
+        var CARD = Color.FromArgb(30, 41, 59);
+        var BORDER = Color.FromArgb(51, 65, 85);
+        var ACCENT = Color.FromArgb(59, 130, 246);
+        var SUCCESS = Color.FromArgb(16, 185, 129);
+        var DANGER = Color.FromArgb(239, 68, 68);
+        var WARN = Color.FromArgb(245, 158, 11);
+        var TXT = Color.FromArgb(241, 245, 249);
+        var TXT2 = Color.FromArgb(148, 163, 184);
+        var TXT3 = Color.FromArgb(100, 116, 139);
+        var INPUT = Color.FromArgb(15, 23, 42);
+        var LOG_BG = Color.FromArgb(2, 6, 23);
+
+        this.Text = "AudioRelay";
+        this.Size = new Size(660, 720);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
-        this.BackColor = Color.FromArgb(240, 240, 245);
-        this.Font = new Font("Microsoft YaHei UI", 10);
+        this.BackColor = BG;
+        this.Font = new Font("Segoe UI", 10);
 
+        int x = 24, w = 596;
+
+        // === Title ===
         var title = new Label { Text = "AudioRelay",
-            Font = new Font("Microsoft YaHei UI", 24, FontStyle.Bold),
-            ForeColor = Color.FromArgb(37, 99, 235),
-            Location = new Point(22, 18), Size = new Size(300, 42) };
-        var sub = new Label { Text = "鸿蒙 ⇄ Windows 音频串流",
-            Font = new Font("Microsoft YaHei UI", 10),
-            ForeColor = Color.FromArgb(80, 80, 100),
-            Location = new Point(24, 58), Size = new Size(300, 22) };
+            Font = new Font("Segoe UI", 24, FontStyle.Bold), ForeColor = ACCENT,
+            Location = new Point(x, 16), AutoSize = true };
+        var sub = new Label { Text = "鸿蒙 \u21C4 Windows 音频串流",
+            Font = new Font("Microsoft YaHei UI", 10), ForeColor = TXT2,
+            Location = new Point(x + 2, 52), AutoSize = true };
 
-        var g1 = new GroupBox { Text = " 服务设置 ",
-            Location = new Point(22, 95), Size = new Size(575, 110),
-            BackColor = Color.White, ForeColor = Color.FromArgb(50, 50, 70) };
+        // === Service Settings Card ===
+        var svcCard = new RoundedPanel {
+            Location = new Point(x, 88), Size = new Size(w, 105),
+            BackColor = CARD, BorderColor = BORDER, CornerRadius = 12 };
 
+        var portLbl = new Label { Text = "PORT",
+            Font = new Font("Segoe UI", 8), ForeColor = TXT3,
+            Location = new Point(18, 14), AutoSize = true };
         txtPort = new TextBox { Text = "9287",
-            BackColor = Color.White, ForeColor = Color.FromArgb(40, 40, 60),
-            Location = new Point(300, 28), Size = new Size(80, 25),
-            BorderStyle = BorderStyle.None, Font = new Font("Consolas", 10) };
-        btnStart = new Button { Text = "▶ 启动服务",
-            Location = new Point(15, 65), Size = new Size(545, 32),
-            FlatStyle = FlatStyle.Flat, FlatAppearance = { BorderSize = 0 },
-            BackColor = Color.FromArgb(37, 99, 235), ForeColor = Color.White };
+            BackColor = INPUT, ForeColor = TXT, BorderStyle = BorderStyle.None,
+            Location = new Point(18, 36), Size = new Size(80, 28),
+            Font = new Font("Consolas", 12), TextAlign = HorizontalAlignment.Center };
+        btnStart = new Button { Text = "\u25B6  启动服务",
+            Location = new Point(115, 28), Size = new Size(w - 135, 40),
+            FlatStyle = FlatStyle.Flat, BackColor = ACCENT, ForeColor = Color.White,
+            Font = new Font("Microsoft YaHei UI", 12, FontStyle.Bold), Cursor = Cursors.Hand };
+        btnStart.FlatAppearance.BorderSize = 0;
         btnStart.Click += OnStartClick;
-        g1.Controls.AddRange([new Label { Text = "端口:", Location = new Point(15, 30),
-            Size = new Size(40, 22), ForeColor = Color.FromArgb(80, 80, 100) },
-            txtPort, btnStart]);
+        svcCard.Controls.AddRange([portLbl, txtPort, btnStart]);
 
-        lblStatus = new Label { Text = "● 未启动",
-            ForeColor = Color.FromArgb(255, 71, 87),
-            Location = new Point(22, 215), Size = new Size(575, 25),
-            Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
+        // === Status ===
+        lblStatus = new Label { Text = "\u25CF  未启动",
+            ForeColor = DANGER, Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold),
+            Location = new Point(x, 206), Size = new Size(w, 24) };
 
-        var g2 = new GroupBox { Text = " 音频流控制 ",
-            Location = new Point(22, 248), Size = new Size(575, 145),
-            BackColor = Color.White, ForeColor = Color.FromArgb(50, 50, 70) };
+        // === Stream Control Card ===
+        var streamCard = new RoundedPanel {
+            Location = new Point(x, 242), Size = new Size(w, 240),
+            BackColor = CARD, BorderColor = BORDER, CornerRadius = 12 };
+        var streamTitle = new Label { Text = "STREAM CONTROL",
+            Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = TXT3,
+            Location = new Point(18, 14), AutoSize = true };
 
-        btnPcToPhone = new ToggleButton("⬇ PC → 手机") {
-            Location = new Point(15, 50), Size = new Size(260, 70),
-            Font = new Font("Microsoft YaHei UI", 12, FontStyle.Bold), Enabled = false };
+        btnPcToPhone = new ToggleButton("\U0001F4BB", "PC \u2192 手机", "将电脑声音传到手机播放") {
+            Location = new Point(16, 42), Size = new Size(w - 32, 82), Enabled = false };
         btnPcToPhone.Click += OnPcToPhoneClick;
-        btnPhoneToPc = new ToggleButton("⬆ 手机 → PC") {
-            Location = new Point(295, 50), Size = new Size(260, 70),
-            Font = new Font("Microsoft YaHei UI", 12, FontStyle.Bold), Enabled = false };
+
+        btnPhoneToPc = new ToggleButton("\U0001F4F1", "手机 \u2192 PC", "将手机麦克风声音传到电脑") {
+            Location = new Point(16, 136), Size = new Size(w - 32, 82), Enabled = false };
         btnPhoneToPc.Click += OnPhoneToPcClick;
-        g2.Controls.AddRange([
-            btnPcToPhone, btnPhoneToPc]);
 
-        txtLog = new TextBox { Location = new Point(22, 410), Size = new Size(575, 150),
+        streamCard.Controls.AddRange([streamTitle, btnPcToPhone, btnPhoneToPc]);
+
+        // === Log Card ===
+        var logCard = new RoundedPanel {
+            Location = new Point(x, 496), Size = new Size(w, 180),
+            BackColor = CARD, BorderColor = BORDER, CornerRadius = 12 };
+        var logTitle = new Label { Text = "LOG",
+            Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = TXT3,
+            Location = new Point(18, 10), AutoSize = true };
+        txtLog = new TextBox {
+            Location = new Point(12, 32), Size = new Size(w - 24, 136),
             Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
-            BackColor = Color.White, ForeColor = Color.FromArgb(37, 99, 235),
-            Font = new Font("Consolas", 9), BorderStyle = BorderStyle.None };
+            BackColor = LOG_BG, ForeColor = Color.FromArgb(74, 222, 128),
+            Font = new Font("Cascadia Code", 9), BorderStyle = BorderStyle.None };
+        logCard.Controls.AddRange([logTitle, txtLog]);
 
-        Controls.AddRange([title, sub, g1, lblStatus, g2, txtLog]);
+        Controls.AddRange([title, sub, svcCard, lblStatus, streamCard, logCard]);
 
-        // 服务回调
+        // === 服务回调 ===
         server.OnLog += Log;
         capture.OnLog += Log;
         playback.OnLog += Log;
         server.OnConnected += (ok) => Invoke(() => {
             if (ok) {
-                lblStatus.Text = "● 已连接"; lblStatus.ForeColor = Color.Green;
+                lblStatus.Text = "\u25CF  已连接"; lblStatus.ForeColor = SUCCESS;
                 btnPcToPhone.Enabled = true; btnPhoneToPc.Enabled = true;
                 Log("鸿蒙端已连接");
             } else {
-                lblStatus.Text = "● 等待连接..."; lblStatus.ForeColor = Color.Orange;
-                btnPcToPhone.Enabled = false; btnPcToPhone.Off();
-                btnPhoneToPc.Enabled = false; btnPhoneToPc.Off();
+                lblStatus.Text = "\u25CF  等待连接..."; lblStatus.ForeColor = WARN;
+                btnPcToPhone.Enabled = false; btnPcToPhone.SetActive(false, "\U0001F4BB  PC \u2192 手机");
+                btnPhoneToPc.Enabled = false; btnPhoneToPc.SetActive(false, "\U0001F4F1  手机 \u2192 PC");
                 capture.Stop(); playback.Stop();
                 Log("鸿蒙端已断开");
             }
         });
-        // 收到手机端音频数据
         server.OnAudioData += (pkt) => {
             if (pkt.Direction != StreamDirection.PhoneToPc) return;
             if (pkt.Encoding == EncodingType.Pcm) {
@@ -123,7 +150,6 @@ private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars =
                 byte[] pcm = AdpcmCodec.Decode(pkt.Payload, pkt.Channels, pkt.SampleRate);
                 playback.WriteData(pcm);
             } else {
-                // Opus 暂未实现手机端编码，按 PCM 处理
                 playback.WriteData(pkt.Payload);
             }
         };
@@ -132,12 +158,16 @@ private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars =
 
     private async void OnStartClick(object? s, EventArgs e)
     {
+        var BG = Color.FromArgb(15, 23, 42);
+        var ACCENT = Color.FromArgb(59, 130, 246);
+        var DANGER = Color.FromArgb(239, 68, 68);
+        var WARN = Color.FromArgb(245, 158, 11);
         if (cts != null) {
             cts.Cancel(); cts = null;
             capture.Stop(); playback.Stop();
-            btnStart.Text = "▶ 启动服务"; btnStart.BackColor = Color.FromArgb(37, 99, 235);
-            txtPort.ReadOnly = false; txtPort.BackColor = Color.White;
-            lblStatus.Text = "● 已停止"; lblStatus.ForeColor = Color.Red;
+            btnStart.Text = "\u25B6  启动服务"; btnStart.BackColor = ACCENT;
+            txtPort.ReadOnly = false; txtPort.BackColor = BG;
+            lblStatus.Text = "\u25CF  已停止"; lblStatus.ForeColor = DANGER;
             btnPcToPhone.Enabled = false; btnPhoneToPc.Enabled = false;
             Log("服务已停止"); return;
         }
@@ -146,27 +176,26 @@ private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars =
         try {
             _ = server.StartAsync(int.Parse(txtPort.Text), cts.Token);
             await Task.Delay(300);
-            btnStart.Text = "■ 停止服务"; btnStart.BackColor = Color.FromArgb(239, 68, 68);
-            txtPort.ReadOnly = true; txtPort.BackColor = Color.LightGray;
-            lblStatus.Text = "● 等待连接..."; lblStatus.ForeColor = Color.Orange;
+            btnStart.Text = "\u25A0  停止服务"; btnStart.BackColor = DANGER;
+            txtPort.ReadOnly = true; txtPort.BackColor = Color.FromArgb(30, 41, 59);
+            lblStatus.Text = "\u25CF  等待连接..."; lblStatus.ForeColor = WARN;
             Log($"服务已启动，端口 {txtPort.Text}");
         } catch (Exception ex) { Log($"失败: {ex.Message}"); }
         finally { btnStart.Enabled = true; }
     }
 
     private void OnPcToPhoneClick(object? s, EventArgs e) {
-        if (btnPcToPhone.Active) { capture.Stop(); btnPcToPhone.Off(); Log("■ PC→手机 已关闭"); return; }
+        if (btnPcToPhone.Active) { capture.Stop(); btnPcToPhone.SetActive(false, "\U0001F4BB  PC \u2192 手机"); Log("\u25A0 PC\u2192手机 已关闭"); return; }
         capture.SetEncoding(EncodingType.Opus);
         capture.SetBitrate(64);
         capture.Start();
-        btnPcToPhone.On();
-        Log("▶ PC→手机 已开启 (Opus 64kbps)");
+        btnPcToPhone.SetActive(true, "\u23F9  PC \u2192 手机");
+        Log("\u25B6 PC\u2192手机 已开启 (Opus 64kbps)");
     }
 
-
     private void OnPhoneToPcClick(object? s, EventArgs e) {
-        if (btnPhoneToPc.Active) { playback.Stop(); btnPhoneToPc.Off(); Log("■ 手机→PC 已关闭"); }
-        else { playback.BufferDurationMs = 200; playback.Start(); btnPhoneToPc.On(); Log("▶ 手机→PC 已开启（缓冲 200ms）"); }
+        if (btnPhoneToPc.Active) { playback.Stop(); btnPhoneToPc.SetActive(false, "\U0001F4F1  手机 \u2192 PC"); Log("\u25A0 手机\u2192PC 已关闭"); }
+        else { playback.BufferDurationMs = 200; playback.Start(); btnPhoneToPc.SetActive(true, "\u23F9  手机 \u2192 PC"); Log("\u25B6 手机\u2192PC 已开启（缓冲 200ms）"); }
     }
 
     private void Log(string msg) => Invoke(() => {
@@ -521,19 +550,85 @@ public class AudioPacket {
     }
 }
 
-// 开关按钮
-public class ToggleButton : Button {
+// 圆角面板
+public class RoundedPanel : Panel {
+    public int CornerRadius { get; set; } = 12;
+    public Color BorderColor { get; set; } = Color.FromArgb(51, 65, 85);
+    public RoundedPanel() { DoubleBuffered = true; SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true); }
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using var path = CreateRoundedRect(rect, CornerRadius);
+        using var brush = new SolidBrush(BackColor);
+        g.FillPath(brush, path);
+        using var pen = new Pen(BorderColor, 1);
+        g.DrawPath(pen, path);
+    }
+    private static GraphicsPath CreateRoundedRect(Rectangle r, int rad) {
+        var path = new GraphicsPath();
+        path.AddArc(r.Left, r.Top, rad * 2, rad * 2, 180, 90);
+        path.AddArc(r.Right - rad * 2, r.Top, rad * 2, rad * 2, 270, 90);
+        path.AddArc(r.Right - rad * 2, r.Bottom - rad * 2, rad * 2, rad * 2, 0, 90);
+        path.AddArc(r.Left, r.Bottom - rad * 2, rad * 2, rad * 2, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+// 流控制按钮
+public class ToggleButton : Control {
     private bool active;
     public bool Active => active;
-    private readonly string offText;
-    public ToggleButton(string text) : base() {
-        offText = text; Text = text; FlatStyle = FlatStyle.Flat;
-        FlatAppearance.BorderSize = 2; FlatAppearance.BorderColor = Color.FromArgb(200, 200, 200);
-        BackColor = Color.White; ForeColor = Color.FromArgb(100, 100, 100);
-        Font = new("微软雅黑", 11, FontStyle.Bold);
+    private readonly string icon;
+    private string label;
+    private readonly string desc;
+    private static readonly Color BG = Color.FromArgb(30, 41, 59);
+    private static readonly Color BORDER = Color.FromArgb(51, 65, 85);
+    private static readonly Color ACTIVE_BG = Color.FromArgb(16, 185, 129);
+    private static readonly Color TXT = Color.FromArgb(241, 245, 249);
+    private static readonly Color TXT2 = Color.FromArgb(148, 163, 184);
+    private static readonly Color DIM = Color.FromArgb(100, 116, 139);
+
+    public ToggleButton(string icon, string label, string desc) {
+        this.icon = icon; this.label = label; this.desc = desc;
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        Cursor = Cursors.Hand;
     }
-    public void On() { active = true; BackColor = Color.FromArgb(16, 185, 129); ForeColor = Color.White;
-        FlatAppearance.BorderColor = Color.FromArgb(16, 185, 129); Text = "⏹ " + offText[2..]; }
-    public void Off() { active = false; BackColor = Color.White; ForeColor = Color.FromArgb(100, 100, 100);
-        FlatAppearance.BorderColor = Color.FromArgb(200, 200, 200); Text = offText; }
+    public void SetActive(bool on, string newLabel) {
+        active = on; label = newLabel; Invalidate();
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        int rad = 10;
+        using var path = CreateRoundedRect(rect, rad);
+
+        Color fill = !Enabled ? Color.FromArgb(20, 30, 48) : active ? ACTIVE_BG : BG;
+        Color border = !Enabled ? Color.FromArgb(40, 50, 65) : active ? ACTIVE_BG : BORDER;
+        Color textCol = !Enabled ? DIM : TXT;
+        Color descCol = !Enabled ? Color.FromArgb(60, 70, 85) : active ? Color.FromArgb(209, 250, 229) : TXT2;
+
+        using (var brush = new SolidBrush(fill)) g.FillPath(brush, path);
+        using (var pen = new Pen(border, 1.5f)) g.DrawPath(pen, path);
+
+        var iconFont = new Font("Segoe UI Emoji", 18);
+        var titleFont = new Font("Microsoft YaHei UI", 12, FontStyle.Bold);
+        var descFont = new Font("Microsoft YaHei UI", 9);
+
+        g.DrawString(icon, iconFont, new SolidBrush(textCol), 18, (Height - 40) / 2f);
+        g.DrawString(label, titleFont, new SolidBrush(textCol), 58, (Height - 44) / 2f - 2);
+        g.DrawString(desc, descFont, new SolidBrush(descCol), 58, (Height - 44) / 2f + 22);
+    }
+    private static GraphicsPath CreateRoundedRect(Rectangle r, int rad) {
+        var path = new GraphicsPath();
+        path.AddArc(r.Left, r.Top, rad * 2, rad * 2, 180, 90);
+        path.AddArc(r.Right - rad * 2, r.Top, rad * 2, rad * 2, 270, 90);
+        path.AddArc(r.Right - rad * 2, r.Bottom - rad * 2, rad * 2, rad * 2, 0, 90);
+        path.AddArc(r.Left, r.Bottom - rad * 2, rad * 2, rad * 2, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
 }
