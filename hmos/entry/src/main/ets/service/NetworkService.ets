@@ -119,7 +119,7 @@ export class NetworkService {
   }
 
   async sendAudioData(direction: StreamDirection, pcmData: ArrayBuffer,
-    sampleRate: number, channels: number, encodingType?: number): Promise<void> {
+    sampleRate: number, channels: number, encType?: EncodingType): Promise<void> {
     const packet = new AudioPacket();
     packet.msgType = MessageType.AUDIO_DATA;
     packet.direction = direction;
@@ -129,13 +129,7 @@ export class NetworkService {
     packet.channels = channels;
     packet.bitsPerSample = 16;
     packet.payload = pcmData;
-    // 映射UI索引到协议编码类型：0=PCM, 1~4=Opus
-    let enc: EncodingType = EncodingType.OPUS;
-    if (encodingType !== undefined) {
-      if (encodingType === 0) enc = EncodingType.PCM;
-      else enc = EncodingType.OPUS;
-    }
-    packet.encodingType = enc;
+    packet.encodingType = encType ?? EncodingType.PCM;
 
     await this.sendPacket(packet);
   }

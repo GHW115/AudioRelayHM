@@ -95,7 +95,7 @@ export class AudioPacket {
     view.setUint8(offset, this.encodingType); offset += 1;
 
     view.setInt32(offset, this.sequence, true); offset += 4;
-    view.setFloat64(offset, this.timestamp, true); offset += 8;
+    view.setBigInt64(offset, BigInt(Math.floor(this.timestamp)), true); offset += 8;
 
     view.setInt32(offset, this.sampleRate ?? 0, true); offset += 4;
     view.setUint8(offset, this.channels ?? 0); offset += 1;
@@ -128,7 +128,7 @@ export class AudioPacket {
     packet.encodingType = view.getUint8(offset) as EncodingType; offset += 1;
 
     packet.sequence = view.getInt32(offset, true); offset += 4;
-    packet.timestamp = view.getFloat64(offset, true); offset += 8;
+    packet.timestamp = Number(view.getBigInt64(offset, true)); offset += 8;
 
     packet.sampleRate = view.getInt32(offset, true); offset += 4;
     packet.channels = view.getUint8(offset); offset += 1;

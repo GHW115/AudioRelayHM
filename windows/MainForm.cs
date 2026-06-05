@@ -101,10 +101,6 @@ private TextBox txtLog = new() { Multiline = true, ReadOnly = true, ScrollBars =
         server.OnLog += Log;
         capture.OnLog += Log;
         playback.OnLog += Log;
-        // 服务回调
-        server.OnLog += Log;
-        capture.OnLog += Log;
-        playback.OnLog += Log;
         server.OnConnected += (ok) => Invoke(() => {
             if (ok) {
                 lblStatus.Text = "● 已连接"; lblStatus.ForeColor = Color.Green;
@@ -200,13 +196,32 @@ public class NetworkServer {
                 client.NoDelay = true;
                 stream = client.GetStream();
                 OnConnected?.Invoke(true);
-                var buf = new byte[8192];
+                var recvBuf = new MemoryStream();
+                var readBuf = new byte[8192];
                 while (client.Connected && !tk.IsCancellationRequested) {
-                    int n = await stream.ReadAsync(buf, 0, buf.Length, tk);
+                    int n = await stream.ReadAsync(readBuf, 0, readBuf.Length, tk);
                     if (n == 0) break;
-                    var d = new byte[n]; Array.Copy(buf, d, n);
-                    var pkt = AudioPacket.Deserialize(d);
-                    if (pkt.MsgType == MessageType.AudioData) OnAudioData?.Invoke(pkt);
+                    recvBuf.Write(readBuf, 0, n);
+                    var data = recvBuf.ToArray();
+                    int offset = 0;
+                    while (offset + 28 <= data.Length) {
+                        int payloadLen = BitConverter.ToInt32(data, offset + 24);
+                        int totalLen = 28 + payloadLen;
+                        if (offset + totalLen > data.Length) break;
+                        var pktData = new byte[totalLen];
+                        Array.Copy(data, offset, pktData, 0, totalLen);
+                        offset += totalLen;
+                        var pkt = AudioPacket.Deserialize(pktData);
+                        if (pkt.MsgType == MessageType.AudioData) OnAudioData?.Invoke(pkt);
+                    }
+                    if (offset > 0) {
+                        var remaining = new byte[data.Length - offset];
+                        if (remaining.Length > 0) Array.Copy(data, offset, remaining, 0, remaining.Length);
+                        recvBuf = new MemoryStream();
+                        recvBuf.Write(remaining, 0, remaining.Length);
+                    } else if (data.Length > 1024 * 1024) {
+                        recvBuf = new MemoryStream();
+                    }
                 }
             } catch (OperationCanceledException) { break; }
             catch (Exception ex) { OnLog?.Invoke($"连接异常: {ex.Message}"); }

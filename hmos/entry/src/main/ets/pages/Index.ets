@@ -6,9 +6,9 @@
 // pages/Index.ets - 重新设计 UI（深色音频工作室风格）
 
 import { NetworkService, ConnectionState } from '../service/NetworkService';
-import { AudioCapture, AudioCaptureCallback } from '../service/AudioCapture';
+import { AudioCapture, AudioCaptureCallback, AdpcmEncoder } from '../service/AudioCapture';
 import { AudioPlay, AudioPlayCallback } from '../service/AudioPlay';
-import { AudioPacket, StreamDirection } from '../model/AudioPacket';
+import { AudioPacket, StreamDirection, EncodingType } from '../model/AudioPacket';
 
 @Entry
 @Component
@@ -78,13 +78,24 @@ struct Index {
 
     const captureCallback: AudioCaptureCallback = new AudioCaptureCallback();
     captureCallback.onAudioData = (data: ArrayBuffer) => {
-      this.networkService.sendAudioData(
-        StreamDirection.PHONE_TO_PC,
-        data,
-        this.audioCapture.sampleRate,
-        this.audioCapture.channels,
-        this.encodingIndex
-      );
+      if (this.encodingIndex > 0) {
+        let adpcmData = AdpcmEncoder.encode(data, this.audioCapture.channels);
+        this.networkService.sendAudioData(
+          StreamDirection.PHONE_TO_PC,
+          adpcmData,
+          this.audioCapture.sampleRate,
+          this.audioCapture.channels,
+          EncodingType.ADPCM
+        );
+      } else {
+        this.networkService.sendAudioData(
+          StreamDirection.PHONE_TO_PC,
+          data,
+          this.audioCapture.sampleRate,
+          this.audioCapture.channels,
+          EncodingType.PCM
+        );
+      }
     };
     captureCallback.onError = (error: string) => {
       this.statusText = `麦克风错误: ${error}`;
