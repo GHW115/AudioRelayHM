@@ -129,15 +129,29 @@ export class NetworkService {
     packet.channels = channels;
     packet.bitsPerSample = 16;
     packet.payload = pcmData;
-    // 映射UI索引到协议编码类型：0=PCM, 1~4=Opus
-    let enc: EncodingType = EncodingType.OPUS;
-    if (encodingType !== undefined) {
-      if (encodingType === 0) enc = EncodingType.PCM;
-      else enc = EncodingType.OPUS;
-    }
-    packet.encodingType = enc;
+    // 手机端始终发送 PCM（无 Opus 编码器），编码选择仅控制 Windows 端捕获
+    packet.encodingType = EncodingType.PCM;
 
     await this.sendPacket(packet);
+  }
+
+  async sendConfig(encoding: number, bitrate: number, bufferMs: number): Promise<void> {
+    const payload = new ArrayBuffer(9);
+    const view = new DataView(payload);
+    view.setUint8(0, encoding);           // 编码类型: 0=PCM, 1=Opus, 2=ADPCM
+    view.setInt32(1, bitrate, true);       // 码率 kbps
+    view.setInt32(5, bufferMs, true);      // 缓冲 ms
+    await this.sendControl(ControlCommand.CONFIG, payload);
+  }
+
+  async sendTimeSync(): Promise<void> {
+    const payload = new ArrayBuffer(8);
+    const view = new DataView(payload);
+    let now: number = Date.now();
+    // 以 Int64 LE 格式写入时间戳
+    view.setUint32(0, now >>> 0, true);
+    view.setInt32(4, Math.floor(now / 0x100000000), true);
+    await this.sendControl(ControlCommand.TIME_SYNC, payload);
   }
 
   async sendControl(command: ControlCommand, payload?: ArrayBuffer): Promise<void> {

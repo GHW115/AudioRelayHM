@@ -8,7 +8,7 @@
 import { NetworkService, ConnectionState } from '../service/NetworkService';
 import { AudioCapture, AudioCaptureCallback } from '../service/AudioCapture';
 import { AudioPlay, AudioPlayCallback } from '../service/AudioPlay';
-import { AudioPacket, StreamDirection } from '../model/AudioPacket';
+import { AudioPacket, StreamDirection, ControlCommand } from '../model/AudioPacket';
 
 @Entry
 @Component
@@ -17,24 +17,26 @@ struct Index {
   @State private port: string = '9287';
   @State private connectionState: string = '未连接';
   @State private isConnected: boolean = false;
-  @State private pcToPhoneActive: boolean = false;
   @State private phoneToPCActive: boolean = false;
   @State private statusText: string = '就绪';
   @State private encodingIndex: number = 2;
-  @State private bufferIndex: number = 0;
+  @State private bufferIndex: number = 1;
   private encodingOptions: SelectOption[] = [
     { value: 'PCM' },
     { value: 'Opus 32k' }, { value: 'Opus 64k' },
     { value: 'Opus 128k' }, { value: 'Opus 192k' }
   ];
   private bufferOptions: SelectOption[] = [
-    { value: '200ms' }, { value: '500ms' }, { value: '1000ms' }, { value: '2000ms' }
+    { value: '50ms' }, { value: '100ms' }, { value: '200ms' }, { value: '500ms' }, { value: '1000ms' }
   ];
+  private bufferMsValues: number[] = [50, 100, 200, 500, 1000];
   @State private animScale: number = 1.0;
 
   private networkService: NetworkService = new NetworkService();
   private audioCapture: AudioCapture = new AudioCapture();
   private audioPlay: AudioPlay = new AudioPlay();
+  private lastLatencyReport: number = 0;
+  private clockOffset: number = 0;
 
   aboutToAppear(): void {
     let ctx = AppStorage.get<Context>('abilityContext');
@@ -55,8 +57,9 @@ struct Index {
           this.connectionState = '未连接';
           this.isConnected = false;
           this.statusText = '已断开连接';
-          this.pcToPhoneActive = false;
           this.phoneToPCActive = false;
+          this.audioCapture.stop();
+          this.audioPlay.stop();
           break;
         case ConnectionState.CONNECTING:
           this.connectionState = '连接中...';
@@ -65,7 +68,14 @@ struct Index {
         case ConnectionState.CONNECTED:
           this.connectionState = '已连接';
           this.isConnected = true;
-          this.statusText = '已连接到 Windows 端';
+          this.clockOffset = 0;
+          this.statusText = '已连接到 Windows 端，PC音频→手机播放中';
+          // 自动开启 PC→手机 播放
+          this.audioPlay.setBufferDuration(this.bufferMsValues[this.bufferIndex]);
+          this.audioPlay.start();
+          this.sendCurrentConfig();
+          // 时钟同步
+          this.networkService.sendTimeSync();
           break;
       }
     };
@@ -73,6 +83,33 @@ struct Index {
     this.networkService.onAudioData = (packet: AudioPacket) => {
       if (packet.direction === StreamDirection.PC_TO_PHONE) {
         this.audioPlay.writeData(packet.payload, packet.encodingType);
+        // 计算 PC→手机单向延迟并回传（减去时钟偏差）
+        let latencyMs: number = Date.now() - packet.timestamp - this.clockOffset;
+        let now: number = Date.now();
+        if (latencyMs >= 0 && latencyMs < 10000 && now - this.lastLatencyReport > 200) {
+          this.lastLatencyReport = now;
+          let payload = new ArrayBuffer(4);
+          new DataView(payload).setInt32(0, latencyMs, true);
+          this.networkService.sendControl(ControlCommand.LATENCY_REPORT, payload);
+        }
+      }
+    };
+
+    this.networkService.onControlMessage = (packet: AudioPacket) => {
+      if (packet.command === ControlCommand.TIME_SYNC && packet.payload.byteLength >= 16) {
+        let view = new DataView(packet.payload);
+        // 读取回传的手机时间戳 (Int64 LE)
+        let phoneTimeLow: number = view.getUint32(0, true);
+        let phoneTimeHigh: number = view.getInt32(4, true);
+        let phoneTime: number = phoneTimeHigh * 0x100000000 + phoneTimeLow;
+        // 读取 PC 时间戳 (Int64 LE)
+        let pcTimeLow: number = view.getUint32(8, true);
+        let pcTimeHigh: number = view.getInt32(12, true);
+        let pcTime: number = pcTimeHigh * 0x100000000 + pcTimeLow;
+        // 计算时钟偏差: offset = (t1 + t3) / 2 - pcTime
+        let t3: number = Date.now();
+        this.clockOffset = Math.floor((phoneTime + t3) / 2) - pcTime;
+        console.info(`[Index] 时钟偏差校准: ${this.clockOffset}ms`);
       }
     };
 
@@ -244,40 +281,36 @@ struct Index {
           .width('100%')
           .margin({ bottom: 16 })
 
-        // PC → 手机
-        Column() {
-          Row() {
-            // 图标
-            Text('💻')
-              .fontSize(20)
-              .margin({ right: 10 })
-            Column() {
-              Text('PC → 手机')
-                .fontSize(15)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(this.pcToPhoneActive ? '#2563EB' : '#4A5568')
-              Text('将电脑声音传到手机播放')
-                .fontSize(11)
-                .fontColor('#A0AEC0')
-                .margin({ top: 2 })
-            }
-            .layoutWeight(1)
-
-            Toggle({ type: ToggleType.Switch, isOn: this.pcToPhoneActive })
-              .selectedColor('#2563EB')
-              .switchPointColor('#FFFFFF')
-              .onChange((isOn: boolean) => {
-                this.pcToPhoneActive = isOn;
-                this.togglePcToPhone(isOn);
-              })
+        // PC → 手机（自动，显示状态）
+        Row() {
+          Text('💻')
+            .fontSize(20)
+            .margin({ right: 10 })
+          Column() {
+            Text('PC → 手机')
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.isConnected ? '#2563EB' : '#A0AEC0')
+            Text('连接后自动将电脑声音传到手机播放')
+              .fontSize(11)
+              .fontColor('#A0AEC0')
+              .margin({ top: 2 })
           }
-          .width('100%')
-          .padding(14)
-          .backgroundColor(this.pcToPhoneActive ? '#2563EB11' : '#F0F2F8')
-          .borderRadius(12)
-          .border({ width: 1, color: this.pcToPhoneActive ? '#2563EB44' : '#E2E8F0' })
+          .layoutWeight(1)
+
+          Text(this.isConnected ? '串流中' : '待连接')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.isConnected ? '#10B981' : '#A0AEC0')
+            .backgroundColor(this.isConnected ? '#10B98122' : '#F0F2F8')
+            .borderRadius(8)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
         }
         .width('100%')
+        .padding(14)
+        .backgroundColor(this.isConnected ? '#2563EB11' : '#F0F2F8')
+        .borderRadius(12)
+        .border({ width: 1, color: this.isConnected ? '#2563EB44' : '#E2E8F0' })
         .margin({ bottom: 10 })
 
         // 手机 → PC
@@ -331,7 +364,10 @@ struct Index {
             Select(this.encodingOptions)
               .selected(this.encodingIndex)
               .value(this.encodingOptions[this.encodingIndex].value)
-              .onSelect((index: number) => { this.encodingIndex = index; })
+              .onSelect((index: number) => {
+                this.encodingIndex = index;
+                this.sendCurrentConfig();
+              })
           }
           .layoutWeight(1)
           .margin({ right: 8 })
@@ -344,7 +380,11 @@ struct Index {
             Select(this.bufferOptions)
               .selected(this.bufferIndex)
               .value(this.bufferOptions[this.bufferIndex].value)
-              .onSelect((index: number) => { this.bufferIndex = index; })
+              .onSelect((index: number) => {
+                this.bufferIndex = index;
+                this.audioPlay.setBufferDuration(this.bufferMsValues[index]);
+                this.sendCurrentConfig();
+              })
           }
           .layoutWeight(1)
           .margin({ left: 8 })
@@ -383,30 +423,39 @@ struct Index {
     await this.audioCapture.stop();
     await this.audioPlay.stop();
     await this.networkService.disconnect();
-    this.pcToPhoneActive = false;
     this.phoneToPCActive = false;
     this.statusText = '已断开';
-  }
-
-  private async togglePcToPhone(enable: boolean): Promise<void> {
-    if (!this.isConnected) { this.statusText = '请先连接 Windows 端'; return; }
-    if (enable) {
-      await this.audioPlay.start();
-      this.statusText = 'PC 音频 → 手机 已开启';
-    } else {
-      await this.audioPlay.stop();
-      this.statusText = 'PC 音频 → 手机 已关闭';
-    }
   }
 
   private async togglePhoneToPc(enable: boolean): Promise<void> {
     if (!this.isConnected) { this.statusText = '请先连接 Windows 端'; return; }
     if (enable) {
       await this.audioCapture.start();
+      this.sendCurrentConfig();
       this.statusText = '手机麦克风 → PC 已开启';
     } else {
       this.audioCapture.stop();
       this.statusText = '手机麦克风 → PC 已关闭';
     }
+  }
+
+  private sendCurrentConfig(): void {
+    if (!this.isConnected) {
+      return;
+    }
+    // 编码索引映射: 0=PCM, 1~4=Opus(32k/64k/128k/192k)
+    let enc: number = this.encodingIndex === 0 ? 0 : 1;
+    let bitrate: number = 0;
+    if (this.encodingIndex === 1) {
+      bitrate = 32;
+    } else if (this.encodingIndex === 2) {
+      bitrate = 64;
+    } else if (this.encodingIndex === 3) {
+      bitrate = 128;
+    } else if (this.encodingIndex === 4) {
+      bitrate = 192;
+    }
+    let bufferMs: number = this.bufferMsValues[this.bufferIndex];
+    this.networkService.sendConfig(enc, bitrate, bufferMs);
   }
 }

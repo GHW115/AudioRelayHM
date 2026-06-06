@@ -31,6 +31,12 @@ export enum ControlCommand {
   STOP_STREAM = 4,
   /** 音量设置 */
   VOLUME = 5,
+  /** 配置参数（编码/码率/缓冲） */
+  CONFIG = 6,
+  /** 延迟报告（手机→PC） */
+  LATENCY_REPORT = 7,
+  /** 时钟同步请求 */
+  TIME_SYNC = 8,
 }
 
 /**
@@ -95,7 +101,11 @@ export class AudioPacket {
     view.setUint8(offset, this.encodingType); offset += 1;
 
     view.setInt32(offset, this.sequence, true); offset += 4;
-    view.setFloat64(offset, this.timestamp, true); offset += 8;
+    // timestamp 以 Int64 LE 格式写入（拆分为低32位+高32位），与 Windows BinaryWriter.Write(long) 一致
+    let tsLow: number = (this.timestamp >>> 0);
+    let tsHigh: number = Math.floor(this.timestamp / 0x100000000);
+    view.setUint32(offset, tsLow, true); offset += 4;
+    view.setInt32(offset, tsHigh, true); offset += 4;
 
     view.setInt32(offset, this.sampleRate ?? 0, true); offset += 4;
     view.setUint8(offset, this.channels ?? 0); offset += 1;
@@ -128,7 +138,11 @@ export class AudioPacket {
     packet.encodingType = view.getUint8(offset) as EncodingType; offset += 1;
 
     packet.sequence = view.getInt32(offset, true); offset += 4;
-    packet.timestamp = view.getFloat64(offset, true); offset += 8;
+    // timestamp 以 Int64 LE 格式读取（低32位+高32位重组），与 Windows BinaryReader.ReadInt64() 一致
+    let tsLow: number = view.getUint32(offset, true);
+    let tsHigh: number = view.getInt32(offset + 4, true);
+    packet.timestamp = tsHigh * 0x100000000 + tsLow;
+    offset += 8;
 
     packet.sampleRate = view.getInt32(offset, true); offset += 4;
     packet.channels = view.getUint8(offset); offset += 1;

@@ -28,3 +28,4 @@ obj/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+*.dmp

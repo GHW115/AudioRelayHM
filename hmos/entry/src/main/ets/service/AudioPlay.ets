@@ -11,17 +11,7 @@ import { wantAgent, WantAgent } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { avSession } from '@kit.AVSessionKit';
 import { EncodingType } from '../model/AudioPacket';
-// NAPI 模块声明
-import opusModule from 'libopus_decoder.so';
-
-interface OpusAPI {
-  createDecoder(sr: number, ch: number): number;
-  pushInput(handle: number, data: ArrayBuffer): void;
-  readOutput(handle: number): ArrayBuffer | undefined;
-  destroyDecoder(handle: number): void;
-}
-
-const opusAPI = opusModule as OpusAPI;
+import { createDecoder, pushInput, readOutput, destroyDecoder } from 'libopus_decoder.so';
 
 /**
  * 音频播放回调类
@@ -135,10 +125,11 @@ export class AudioPlay {
   // 缓冲区
   private bufferQueue: ArrayBuffer[] = [];
   private bufferSize: number = 0;
-  private readonly BUFFER_TARGET: number = 38400;
+  private bufferTargetMs: number = 200;
   private flushTaskId: number = -1;
   private opusHandle: number = 0;
   private opusInitDone: boolean = false;
+  private lastEncodingType: EncodingType = EncodingType.PCM;
 
   get sampleRate(): number {
     return this._sampleRate;
@@ -154,6 +145,11 @@ export class AudioPlay {
 
   get playing(): boolean {
     return this.isPlaying;
+  }
+
+  setBufferDuration(ms: number): void {
+    this.bufferTargetMs = ms;
+    console.info(`[AudioPlay] Buffer target set to ${ms}ms`);
   }
 
   setCallback(callback: AudioPlayCallback): void {
@@ -228,24 +224,38 @@ export class AudioPlay {
         return;
       }
       this.flushBuffer();
-      this.flushTaskId = setTimeout(flush, 10);
+      this.flushTaskId = setTimeout(flush, 5);
     };
-    this.flushTaskId = setTimeout(flush, 10);
+    this.flushTaskId = setTimeout(flush, 5);
   }
 
   async writeData(data: ArrayBuffer, encodingType: EncodingType = EncodingType.PCM): Promise<void> {
     if (!this.isPlaying) {
       return;
     }
+    // 检测编码切换：清理旧缓冲，重置解码器
+    if (encodingType !== this.lastEncodingType) {
+      console.info(`[AudioPlay] 编码切换: ${this.lastEncodingType} -> ${encodingType}，清理缓冲`);
+      this.bufferQueue = [];
+      this.bufferSize = 0;
+      if (encodingType === EncodingType.OPUS || this.lastEncodingType === EncodingType.OPUS) {
+        this.resetOpusDecoder();
+      }
+      this.lastEncodingType = encodingType;
+    }
     if (encodingType === EncodingType.ADPCM) {
-      let pcm = AdpcmDecoder.decode(data, this._channels);
+      let pcm: ArrayBuffer = AdpcmDecoder.decode(data, this._channels);
       this.bufferQueue.push(pcm);
       this.bufferSize += pcm.byteLength;
     } else if (encodingType === EncodingType.OPUS && this.opusHandle !== 0) {
-      opusAPI.pushInput(this.opusHandle, data);
+      pushInput(this.opusHandle, data);
     } else {
       this.bufferQueue.push(data);
       this.bufferSize += data.byteLength;
+    }
+    // 缓冲充足时立即写入，不等定时器
+    if (this.bufferSize >= 960) {
+      this.flushBuffer();
     }
   }
 
@@ -256,7 +266,7 @@ export class AudioPlay {
     // 从解码器输出队列取 PCM
     if (this.opusHandle !== 0) {
       while (true) {
-        let pcm = opusAPI.readOutput(this.opusHandle);
+        let pcm: ArrayBuffer | undefined = readOutput(this.opusHandle);
         if (pcm) {
           this.bufferQueue.push(pcm);
           this.bufferSize += pcm.byteLength;
@@ -268,29 +278,22 @@ export class AudioPlay {
     if (this.bufferQueue.length === 0) {
       return;
     }
-    // 合并多帧一次性写入，避免 AudioRenderer 下溢
-    // 累积至少 5 帧（~100ms）再写
-    let totalBytes = 0;
-    let frames: ArrayBuffer[] = [];
-    while (this.bufferQueue.length > 0 && totalBytes < 19200) {
-      let f = this.bufferQueue.shift()!;
-      frames.push(f);
-      totalBytes += f.byteLength;
+    // 每次 flush 最多写入 5ms 数据，匹配 5ms 刷新间隔，保持实时速率
+    // 48kHz * 2ch * 2bytes = 192000 bytes/s，5ms = 960 bytes
+    let maxPerFlush: number = 960;
+    // 取第一个缓冲帧，如果大于 5ms 则拆分
+    let f: ArrayBuffer = this.bufferQueue.shift()!;
+    this.bufferSize -= f.byteLength;
+    if (f.byteLength > maxPerFlush) {
+      // 拆分大帧：取前 5ms，剩余放回队列头部
+      let head = f.slice(0, maxPerFlush);
+      let tail = f.slice(maxPerFlush);
+      this.bufferQueue.unshift(tail);
+      this.bufferSize += tail.byteLength;
+      f = head;
     }
-    if (frames.length === 0) {
-      return;
-    }
-    // 合并为一个 ArrayBuffer
-    let merged = new ArrayBuffer(totalBytes);
-    let dst = new Uint8Array(merged);
-    let off = 0;
-    for (let f of frames) {
-      dst.set(new Uint8Array(f), off);
-      off += f.byteLength;
-    }
-    this.bufferSize -= totalBytes;
     try {
-      this.audioRenderer.write(merged);
+      this.audioRenderer.write(f);
     } catch (err) {
       console.error(`[AudioPlay] Write error: ${err}`);
     }
@@ -371,10 +374,23 @@ export class AudioPlay {
     }
   }
 
+  private resetOpusDecoder(): void {
+    if (this.opusHandle !== 0) {
+      try {
+        destroyDecoder(this.opusHandle);
+      } catch (err) {
+        console.error('[AudioPlay] Failed to destroy Opus decoder: ' + err);
+      }
+      this.opusHandle = 0;
+    }
+    this.initOpusDecoder();
+    console.info('[AudioPlay] Opus decoder reset');
+  }
+
   private initOpusDecoder(): void {
     if (this.opusHandle === 0) {
       try {
-        this.opusHandle = opusAPI.createDecoder(this._sampleRate, this._channels);
+        this.opusHandle = createDecoder(this._sampleRate, this._channels);
         console.info('[AudioPlay] Opus decoder created, handle=' + this.opusHandle);
       } catch (err) {
         console.error('[AudioPlay] Failed to create Opus decoder: ' + err);
@@ -385,7 +401,7 @@ export class AudioPlay {
   private destroyOpusDecoder(): void {
     if (this.opusHandle !== 0) {
       try {
-        opusAPI.destroyDecoder(this.opusHandle);
+        destroyDecoder(this.opusHandle);
       } catch (err) {
         console.error('[AudioPlay] Failed to destroy Opus decoder: ' + err);
       }
