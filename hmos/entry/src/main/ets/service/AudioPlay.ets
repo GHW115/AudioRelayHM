@@ -180,11 +180,15 @@ export class AudioPlay {
       };
 
       this.audioRenderer = await audio.createAudioRenderer(rendererOptions);
+
+      // 注册系统数据回调（拉取模式）：系统主动要求数据，完美匹配实时速率
+      this.audioRenderer.on('writeData', (buffer: ArrayBuffer): audio.AudioDataCallbackResult => {
+        return this.onWriteData(buffer);
+      });
+
       await this.audioRenderer.start();
       this.isPlaying = true;
-      console.info('[AudioPlay] Started');
 
-      this.startFlushLoop();
       this.createAVSession();
       this.startBackgroundTask();
       this.initOpusDecoder();
@@ -218,15 +222,42 @@ export class AudioPlay {
     }
   }
 
-  private startFlushLoop(): void {
-    const flush = (): void => {
-      if (!this.isPlaying) {
-        return;
+  // 系统 writeData 回调：填充 buffer 并返回 VALID，系统自动播放
+  private onWriteData(buffer: ArrayBuffer): audio.AudioDataCallbackResult {
+    if (!this.isPlaying) {
+      return audio.AudioDataCallbackResult.INVALID;
+    }
+    // 从 Opus 解码器取 PCM
+    if (this.opusHandle !== 0) {
+      while (true) {
+        let pcm: ArrayBuffer | undefined = readOutput(this.opusHandle);
+        if (pcm) {
+          this.bufferQueue.push(pcm);
+          this.bufferSize += pcm.byteLength;
+        } else {
+          break;
+        }
       }
-      this.flushBuffer();
-      this.flushTaskId = setTimeout(flush, 5);
-    };
-    this.flushTaskId = setTimeout(flush, 5);
+    }
+    // 填充系统提供的 buffer（必须填满，否则杂音）
+    let view: Uint8Array = new Uint8Array(buffer);
+    let filled: number = 0;
+    while (filled < buffer.byteLength && this.bufferQueue.length > 0) {
+      let f: ArrayBuffer = this.bufferQueue.shift()!;
+      this.bufferSize -= f.byteLength;
+      let remaining: number = buffer.byteLength - filled;
+      if (f.byteLength <= remaining) {
+        view.set(new Uint8Array(f), filled);
+        filled += f.byteLength;
+      } else {
+        view.set(new Uint8Array(f, 0, remaining), filled);
+        let tail: ArrayBuffer = f.slice(remaining);
+        this.bufferQueue.unshift(tail);
+        this.bufferSize += tail.byteLength;
+        filled += remaining;
+      }
+    }
+    return audio.AudioDataCallbackResult.VALID;
   }
 
   async writeData(data: ArrayBuffer, encodingType: EncodingType = EncodingType.PCM): Promise<void> {
@@ -252,50 +283,6 @@ export class AudioPlay {
     } else {
       this.bufferQueue.push(data);
       this.bufferSize += data.byteLength;
-    }
-    // 缓冲充足时立即写入，不等定时器
-    if (this.bufferSize >= 960) {
-      this.flushBuffer();
-    }
-  }
-
-  private flushBuffer(): void {
-    if (!this.audioRenderer) {
-      return;
-    }
-    // 从解码器输出队列取 PCM
-    if (this.opusHandle !== 0) {
-      while (true) {
-        let pcm: ArrayBuffer | undefined = readOutput(this.opusHandle);
-        if (pcm) {
-          this.bufferQueue.push(pcm);
-          this.bufferSize += pcm.byteLength;
-        } else {
-          break;
-        }
-      }
-    }
-    if (this.bufferQueue.length === 0) {
-      return;
-    }
-    // 每次 flush 最多写入 5ms 数据，匹配 5ms 刷新间隔，保持实时速率
-    // 48kHz * 2ch * 2bytes = 192000 bytes/s，5ms = 960 bytes
-    let maxPerFlush: number = 960;
-    // 取第一个缓冲帧，如果大于 5ms 则拆分
-    let f: ArrayBuffer = this.bufferQueue.shift()!;
-    this.bufferSize -= f.byteLength;
-    if (f.byteLength > maxPerFlush) {
-      // 拆分大帧：取前 5ms，剩余放回队列头部
-      let head = f.slice(0, maxPerFlush);
-      let tail = f.slice(maxPerFlush);
-      this.bufferQueue.unshift(tail);
-      this.bufferSize += tail.byteLength;
-      f = head;
-    }
-    try {
-      this.audioRenderer.write(f);
-    } catch (err) {
-      console.error(`[AudioPlay] Write error: ${err}`);
     }
   }
 

@@ -4,6 +4,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Linq;
 using NAudio.Wave;
 using Concentus.Structs;
 using Concentus.Enums;
@@ -176,7 +177,7 @@ public class MainForm : Form
         capCard.Controls.AddRange([lblCapTitle, lblCaptureInfo]);
         // 延迟曲线卡片
         var latCard = new RoundedPanel { Location = new Point(0, 264), Size = new Size(580, 108) };
-        var lblLatTitle = new Label { Text = "网络延迟", Font = new Font("Microsoft YaHei UI", 10),
+        var lblLatTitle = new Label { Text = "端到端延迟", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(113, 128, 150), Location = new Point(16, 4), AutoSize = true };
         latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(556, 80) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
@@ -417,11 +418,11 @@ public class NetworkServer {
             finally { OnConnected?.Invoke(false); stream?.Close(); client?.Close(); }
         }
     }
-    public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm) {
+    public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm, long? captureTime = null) {
         if (stream == null) return;
         var p = new AudioPacket { MsgType = MessageType.AudioData, Direction = StreamDirection.PcToPhone,
             Encoding = enc, Sequence = seq++,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Timestamp = captureTime ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             SampleRate = sr, Channels = ch, BitsPerSample = 16, Payload = data };
         await stream.WriteAsync(p.Serialize());
     }
@@ -583,6 +584,9 @@ public class AudioCaptureService {
     private int opusBitrate = 64; // kbps
     private OpusEncoder? opusEncoder;
     private List<short> opusBuffer = new();
+    private DateTime captureStartTime;
+    private int callbackCount = 0;
+    private bool firstNonZeroLogged = false;
     public event Action<string>? OnLog;
     public void SetServer(NetworkServer s) => srv = s;
     public string CurrentEncoding => encodingType.ToString();
@@ -621,6 +625,7 @@ public class AudioCaptureService {
         cap = new();
         sampleRate = cap.WaveFormat.SampleRate;
         channels = cap.WaveFormat.Channels;
+        OnLog?.Invoke($"WASAPI 格式: {sampleRate}Hz, {channels}ch, 32bit float");
 
         if (encodingType == EncodingType.Opus) {
             opusEncoder = new OpusEncoder(sampleRate, channels, OpusApplication.OPUS_APPLICATION_AUDIO);
@@ -628,6 +633,9 @@ public class AudioCaptureService {
             opusBuffer.Clear();
         }
 
+        captureStartTime = DateTime.UtcNow;
+        callbackCount = 0;
+        firstNonZeroLogged = false;
         cap.DataAvailable += OnDataAvailable;
         cap.StartRecording();
         OnLog?.Invoke($"音频捕获已启动 ({encodingType})");
@@ -636,31 +644,108 @@ public class AudioCaptureService {
     private void OnDataAvailable(object? sender, NAudio.Wave.WaveInEventArgs e) {
         if (srv?.Connected != true || e.BytesRecorded <= 0) return;
 
-        int sampleCount = e.BytesRecorded / 4;
-        var floatBuf = new float[sampleCount];
-        Buffer.BlockCopy(e.Buffer, 0, floatBuf, 0, e.BytesRecorded);
+        callbackCount++;
+        // 首次回调诊断日志
+        if (callbackCount == 1) {
+            var delay = (DateTime.UtcNow - captureStartTime).TotalMilliseconds;
+            OnLog?.Invoke($"[DEBUG] 首次WASAPI回调延迟: {delay:F0}ms, 缓冲: {e.BytesRecorded}B = {e.BytesRecorded / (4.0 * channels) / sampleRate * 1000:F1}ms");
+        } else if (callbackCount <= 5) {
+            OnLog?.Invoke($"[DEBUG] WASAPI回调#{callbackCount}: {e.BytesRecorded}B = {e.BytesRecorded / (4.0 * channels) / sampleRate * 1000:F1}ms");
+        }
 
-        var shortBuf = new short[sampleCount];
-        for (int i = 0; i < sampleCount; i++) {
+        // 诊断: 输出前3帧采样值 + 首个非零帧
+        if (callbackCount <= 3 || !firstNonZeroLogged) {
+            var tmpFloat = new float[Math.Min(20, e.BytesRecorded / 4)];
+            Buffer.BlockCopy(e.Buffer, 0, tmpFloat, 0, tmpFloat.Length * 4);
+            bool hasNonZero = tmpFloat.Any(v => Math.Abs(v) > 0.0001f);
+            if (callbackCount <= 3 || (hasNonZero && !firstNonZeroLogged)) {
+                if (hasNonZero) firstNonZeroLogged = true;
+                var sampleStr = string.Join(", ", tmpFloat.Select((v, i) => $"[{i / channels}]{(i % channels == 0 ? "L" : "R")}={v:F4}"));
+                OnLog?.Invoke($"[DEBUG] 采样值{(hasNonZero ? "(有声音!)" : "(静音)")}: {sampleStr}");
+            }
+        }
+
+        // 在最早处捕获时间戳，用于端到端延迟测量
+        long captureTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        int srcChannels = channels;
+        int srcFrames = e.BytesRecorded / (4 * srcChannels); // float32 per sample
+        if (srcFrames <= 0) return;
+        var floatBuf = new float[srcFrames * srcChannels];
+        Buffer.BlockCopy(e.Buffer, 0, floatBuf, 0, srcFrames * srcChannels * 4);
+
+        // 原始格式 float→short（Opus 编码器内部处理重采样，无需预处理）
+        int totalSamples = srcFrames * srcChannels;
+        var rawShort = new short[totalSamples];
+        for (int i = 0; i < totalSamples; i++) {
             float s = Math.Clamp(floatBuf[i], -1f, 1f);
-            shortBuf[i] = (short)(s * 32767f);
+            rawShort[i] = (short)(s * 32767f);
         }
 
         if (encodingType == EncodingType.Opus) {
+            // Opus: 直接用原始采样率/声道，编码器内部处理
             lock (opusBuffer) {
-                opusBuffer.AddRange(shortBuf);
+                opusBuffer.AddRange(rawShort);
             }
-            FlushOpus();
-        } else if (encodingType == EncodingType.Adpcm) {
-            byte[] adpcm = AdpcmCodec.Encode(shortBuf, channels);
-            _ = srv.SendAudioAsync(adpcm, sampleRate, (byte)channels, EncodingType.Adpcm);
+            FlushOpus(captureTime);
         } else {
-            var pcm = new byte[sampleCount * 2];
-            Buffer.BlockCopy(shortBuf, 0, pcm, 0, pcm.Length);
-            _ = srv.SendAudioAsync(pcm, sampleRate, (byte)channels, EncodingType.Pcm);
+            // PCM/ADPCM: 重采样到 48kHz 立体声，匹配手机端 AudioRenderer
+            const int outRate = 48000;
+            float[] stereo48;
+            if (sampleRate == outRate && srcChannels == 2) {
+                stereo48 = floatBuf;
+            } else {
+                stereo48 = ResampleToStereo48(floatBuf, sampleRate, outRate, srcFrames, srcChannels);
+            }
+            var shortBuf = new short[stereo48.Length];
+            for (int i = 0; i < stereo48.Length; i++) {
+                float s = Math.Clamp(stereo48[i], -1f, 1f);
+                shortBuf[i] = (short)(s * 32767f);
+            }
+            if (encodingType == EncodingType.Adpcm) {
+                byte[] adpcm = AdpcmCodec.Encode(shortBuf, 2);
+                _ = srv.SendAudioAsync(adpcm, outRate, 2, EncodingType.Adpcm, captureTime);
+            } else {
+                var pcm = new byte[shortBuf.Length * 2];
+                Buffer.BlockCopy(shortBuf, 0, pcm, 0, pcm.Length);
+                _ = srv.SendAudioAsync(pcm, outRate, 2, EncodingType.Pcm, captureTime);
+            }
         }
     }
-    private void FlushOpus() {
+
+    /// <summary>
+    /// 将任意采样率/声道的 float 音频重采样为 48kHz 立体声
+    /// </summary>
+    private static float[] ResampleToStereo48(float[] input, int srcRate, int dstRate, int srcFrames, int srcChannels) {
+        int dstFrames = (int)((long)srcFrames * dstRate / srcRate);
+        if (dstFrames <= 0) return Array.Empty<float>();
+        var output = new float[dstFrames * 2];
+        float ratio = (float)srcRate / dstRate;
+
+        for (int i = 0; i < dstFrames; i++) {
+            float srcPos = i * ratio;
+            int srcIdx = (int)srcPos;
+            float frac = srcPos - srcIdx;
+            int srcIdx1 = Math.Min(srcIdx + 1, srcFrames - 1);
+
+            // 取左右声道（环绕声取前两个声道，单声道复制）
+            float left0, right0, left1, right1;
+            if (srcChannels >= 2) {
+                left0 = input[srcIdx * srcChannels];
+                right0 = input[srcIdx * srcChannels + 1];
+                left1 = input[srcIdx1 * srcChannels];
+                right1 = input[srcIdx1 * srcChannels + 1];
+            } else {
+                left0 = right0 = input[srcIdx];
+                left1 = right1 = input[srcIdx1];
+            }
+
+            output[i * 2] = left0 * (1 - frac) + left1 * frac;
+            output[i * 2 + 1] = right0 * (1 - frac) + right1 * frac;
+        }
+        return output;
+    }
+    private void FlushOpus(long captureTime) {
         int frameSamples = 960; // 20ms @ 48kHz
         int frameTotal = frameSamples * channels;
         var encoder = opusEncoder; // 本地变量快照，避免竞态 null
@@ -674,7 +759,7 @@ public class AudioCaptureService {
                 if (encoded > 0) {
                     var opus = new byte[encoded];
                     Array.Copy(outBuf, opus, encoded);
-                    _ = srv.SendAudioAsync(opus, sampleRate, (byte)channels, EncodingType.Opus);
+                    _ = srv.SendAudioAsync(opus, sampleRate, (byte)channels, EncodingType.Opus, captureTime);
                 }
             }
         }
