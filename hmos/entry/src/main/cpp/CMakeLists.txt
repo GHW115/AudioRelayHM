@@ -1,5 +1,4 @@
-// 🤖 AI 辅助生成 — Claude (Anthropic)
-// 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
+# AudioRelayHM - Opus decoder native module
 
 cmake_minimum_required(VERSION 3.16)
 project(AudioRelayOpus2)

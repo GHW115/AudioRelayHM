@@ -31,15 +31,13 @@ struct DecoderContext {
     // OH_AudioCodec 同步
     std::mutex codecMtx;
     std::condition_variable cvInput;
-    std::condition_variable cvOutput;
     bool inputReady = false;
     uint32_t inputIndex = 0;
     OH_AVBuffer *inputBuffer = nullptr;
-    bool outputReady = false;
-    std::vector<uint8_t> outputData;
+    int pendingInputs = 0; // 已推送但尚未收到输出的输入帧数
 
     void DecodeLoop();
-    void DoDecode(const uint8_t *data, size_t size);
+    void FeedInput(const uint8_t *data, size_t size);
 };
 
 static void OnError(OH_AVCodec *, int32_t, void *) {}
@@ -61,47 +59,47 @@ static void OnNewOutput(OH_AVCodec *codec, uint32_t index, OH_AVBuffer *buffer, 
     if (attr.size > 0 && !(attr.flags & AVCODEC_BUFFER_FLAGS_EOS)) {
         uint8_t *data = OH_AVBuffer_GetAddr(buffer);
         if (data) {
-            std::lock_guard<std::mutex> lock(ctx->codecMtx);
-            ctx->outputData.assign(data + attr.offset, data + attr.offset + attr.size);
-            ctx->outputReady = true;
+            std::vector<uint8_t> pcm(data + attr.offset, data + attr.offset + attr.size);
+            {
+                std::lock_guard<std::mutex> lock(ctx->mtx);
+                ctx->outputQueue.push(std::move(pcm));
+            }
+            ctx->cv.notify_one(); // 唤醒可能等待输出的 ReadOutput
         }
-        ctx->cvOutput.notify_one();
+    }
+    {
+        std::lock_guard<std::mutex> lock(ctx->codecMtx);
+        if (ctx->pendingInputs > 0) ctx->pendingInputs--;
     }
     OH_AudioCodec_FreeOutputBuffer(codec, index);
 }
 
-void DecoderContext::DoDecode(const uint8_t *data, size_t size) {
-    // 1. 等待输入缓冲区
+void DecoderContext::FeedInput(const uint8_t *data, size_t size) {
+    // 等待 codec 提供输入缓冲区（带超时防止死锁）
     {
         std::unique_lock<std::mutex> lock(codecMtx);
-        cvInput.wait(lock, [this] { return inputReady; });
+        if (!cvInput.wait_for(lock, std::chrono::milliseconds(200),
+                              [this] { return inputReady || !running; })) {
+            return; // 超时，跳过本帧
+        }
+        if (!running) return;
         inputReady = false;
     }
 
-    // 2. 填入数据
-    if (inputBuffer) {
+    if (inputBuffer && size <= MAX_PACKET_SIZE) {
         uint8_t *buf = OH_AVBuffer_GetAddr(inputBuffer);
-        if (buf && size <= MAX_PACKET_SIZE) std::memcpy(buf, data, size);
+        if (buf) std::memcpy(buf, data, size);
         OH_AVCodecBufferAttr attr;
-        attr.size = (int32_t)size; attr.offset = 0; attr.pts = 0; attr.flags = AVCODEC_BUFFER_FLAGS_NONE;
+        attr.size = (int32_t)size; attr.offset = 0; attr.pts = 0;
+        attr.flags = AVCODEC_BUFFER_FLAGS_NONE;
         OH_AVBuffer_SetBufferAttr(inputBuffer, &attr);
+        {
+            std::lock_guard<std::mutex> lock(codecMtx);
+            pendingInputs++;
+        }
         OH_AudioCodec_PushInputBuffer(codec, inputIndex);
     }
-
-    // 3. 等待输出
-    std::vector<uint8_t> out;
-    {
-        std::unique_lock<std::mutex> lock(codecMtx);
-        cvOutput.wait(lock, [this] { return outputReady; });
-        outputReady = false;
-        out.swap(outputData);
-    }
-
-    // 4. 放入输出队列
-    if (!out.empty()) {
-        std::lock_guard<std::mutex> lock(mtx);
-        outputQueue.push(std::move(out));
-    }
+    // 不等待输出 —— OnNewOutput 回调会异步地将 PCM 放入 outputQueue
 }
 
 void DecoderContext::DecodeLoop() {
@@ -109,13 +107,14 @@ void DecoderContext::DecodeLoop() {
         std::vector<uint8_t> input;
         {
             std::unique_lock<std::mutex> lock(mtx);
-            cv.wait_for(lock, std::chrono::milliseconds(50), [this] { return !inputQueue.empty() || !running; });
+            cv.wait_for(lock, std::chrono::milliseconds(50),
+                        [this] { return !inputQueue.empty() || !running; });
             if (!running) break;
             if (inputQueue.empty()) continue;
             input = std::move(inputQueue.front());
             inputQueue.pop();
         }
-        DoDecode(input.data(), input.size());
+        FeedInput(input.data(), input.size());
     }
 }
 
