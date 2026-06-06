@@ -584,9 +584,6 @@ public class AudioCaptureService {
     private int opusBitrate = 64; // kbps
     private OpusEncoder? opusEncoder;
     private List<short> opusBuffer = new();
-    private DateTime captureStartTime;
-    private int callbackCount = 0;
-    private bool firstNonZeroLogged = false;
     public event Action<string>? OnLog;
     public void SetServer(NetworkServer s) => srv = s;
     public string CurrentEncoding => encodingType.ToString();
@@ -633,9 +630,6 @@ public class AudioCaptureService {
             opusBuffer.Clear();
         }
 
-        captureStartTime = DateTime.UtcNow;
-        callbackCount = 0;
-        firstNonZeroLogged = false;
         cap.DataAvailable += OnDataAvailable;
         cap.StartRecording();
         OnLog?.Invoke($"音频捕获已启动 ({encodingType})");
@@ -643,27 +637,6 @@ public class AudioCaptureService {
 
     private void OnDataAvailable(object? sender, NAudio.Wave.WaveInEventArgs e) {
         if (srv?.Connected != true || e.BytesRecorded <= 0) return;
-
-        callbackCount++;
-        // 首次回调诊断日志
-        if (callbackCount == 1) {
-            var delay = (DateTime.UtcNow - captureStartTime).TotalMilliseconds;
-            OnLog?.Invoke($"[DEBUG] 首次WASAPI回调延迟: {delay:F0}ms, 缓冲: {e.BytesRecorded}B = {e.BytesRecorded / (4.0 * channels) / sampleRate * 1000:F1}ms");
-        } else if (callbackCount <= 5) {
-            OnLog?.Invoke($"[DEBUG] WASAPI回调#{callbackCount}: {e.BytesRecorded}B = {e.BytesRecorded / (4.0 * channels) / sampleRate * 1000:F1}ms");
-        }
-
-        // 诊断: 输出前3帧采样值 + 首个非零帧
-        if (callbackCount <= 3 || !firstNonZeroLogged) {
-            var tmpFloat = new float[Math.Min(20, e.BytesRecorded / 4)];
-            Buffer.BlockCopy(e.Buffer, 0, tmpFloat, 0, tmpFloat.Length * 4);
-            bool hasNonZero = tmpFloat.Any(v => Math.Abs(v) > 0.0001f);
-            if (callbackCount <= 3 || (hasNonZero && !firstNonZeroLogged)) {
-                if (hasNonZero) firstNonZeroLogged = true;
-                var sampleStr = string.Join(", ", tmpFloat.Select((v, i) => $"[{i / channels}]{(i % channels == 0 ? "L" : "R")}={v:F4}"));
-                OnLog?.Invoke($"[DEBUG] 采样值{(hasNonZero ? "(有声音!)" : "(静音)")}: {sampleStr}");
-            }
-        }
 
         // 在最早处捕获时间戳，用于端到端延迟测量
         long captureTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

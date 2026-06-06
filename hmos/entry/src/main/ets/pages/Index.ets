@@ -37,8 +37,6 @@ struct Index {
   private audioPlay: AudioPlay = new AudioPlay();
   private lastLatencyReport: number = 0;
   private clockOffset: number = 0;
-  private firstPacketTime: number = 0;
-  private connectTime: number = 0;
 
   aboutToAppear(): void {
     let ctx = AppStorage.get<Context>('abilityContext');
@@ -71,14 +69,10 @@ struct Index {
           this.connectionState = '已连接';
           this.isConnected = true;
           this.clockOffset = 0;
-          this.firstPacketTime = 0;
-          this.connectTime = Date.now();
           this.statusText = '已连接到 Windows 端，PC音频→手机播放中';
-          console.info(`[DEBUG] 连接成功, AudioRenderer 启动中...`);
           // 自动开启 PC→手机 播放
           this.audioPlay.setBufferDuration(this.bufferMsValues[this.bufferIndex]);
           this.audioPlay.start();
-          console.info(`[DEBUG] AudioRenderer.start() 已调用, 缓冲=${this.bufferMsValues[this.bufferIndex]}ms`);
           this.sendCurrentConfig();
           // 时钟同步
           this.networkService.sendTimeSync();
@@ -88,12 +82,6 @@ struct Index {
 
     this.networkService.onAudioData = (packet: AudioPacket) => {
       if (packet.direction === StreamDirection.PC_TO_PHONE) {
-        // 首个音频数据包的诊断日志
-        if (this.firstPacketTime === 0) {
-          this.firstPacketTime = Date.now();
-          let sinceConnect: number = this.firstPacketTime - this.connectTime;
-          console.info(`[DEBUG] 首个音频包到达: 连接后${sinceConnect}ms, 缓冲=${this.bufferMsValues[this.bufferIndex]}ms`);
-        }
         this.audioPlay.writeData(packet.payload, packet.encodingType);
         // 计算端到端延迟：采集→编码→网络→解码→缓冲
         let latencyMs: number = Date.now() - packet.timestamp - this.clockOffset + this.bufferMsValues[this.bufferIndex];
