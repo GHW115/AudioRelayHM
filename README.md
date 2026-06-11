@@ -76,7 +76,7 @@ cd windows
 dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 ```
 
-生成文件位于 `windows/bin/Release/net8.0/win-x64/publish/AudioRelayWinUI.exe`
+生成文件位于 `windows/bin/Release/net8.0-windows/win-x64/publish/AudioRelayWinUI.exe`
 
 ## 协议
 
