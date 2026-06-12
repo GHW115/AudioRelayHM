@@ -84,18 +84,25 @@ struct Index {
     this.networkService.onAudioData = (packet: AudioPacket) => {
       if (packet.direction === StreamDirection.PC_TO_PHONE) {
         this.audioPlay.writeData(packet.payload, packet.encodingType);
-        // 计算延迟分项
+        // 计算延迟分项：网络 / PC处理 / 缓冲 / 渲染
         let now: number = Date.now();
-        let networkMs: number = now - packet.timestamp - this.clockOffset;
+        let totalMs: number = now - packet.timestamp - this.clockOffset;
+        let networkMs: number = packet.encodeTimestamp > 0
+          ? now - packet.encodeTimestamp - this.clockOffset
+          : totalMs;
+        let pcProcessMs: number = packet.encodeTimestamp > 0
+          ? packet.encodeTimestamp - packet.timestamp
+          : 0;
         let bufferMs: number = this.bufferMsValues[this.bufferIndex];
-        let totalMs: number = networkMs + bufferMs;
+        let rendererMs: number = totalMs - networkMs - pcProcessMs - bufferMs;
         if (totalMs >= 0 && totalMs < 10000 && now - this.lastLatencyReport > 200) {
           this.lastLatencyReport = now;
-          let payload = new ArrayBuffer(12);
+          let payload = new ArrayBuffer(16);
           let view = new DataView(payload);
-          view.setInt32(0, totalMs, true);
-          view.setInt32(4, networkMs, true);
+          view.setInt32(0, networkMs, true);
+          view.setInt32(4, pcProcessMs, true);
           view.setInt32(8, bufferMs, true);
+          view.setInt32(12, rendererMs, true);
           this.networkService.sendControl(ControlCommand.LATENCY_REPORT, payload);
         }
       }

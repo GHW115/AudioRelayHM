@@ -127,8 +127,8 @@ public class MainForm : Form
                 playback.WriteData(pcm);
             } else playback.WriteData(pkt.Payload);
         };
-        server.OnLatencyReport += (total, network, buffer, other) => {
-            Invoke(() => latencyChart.AddSample(total, network, buffer, other));
+        server.OnLatencyReport += (network, pcProcess, buffer, renderer) => {
+            Invoke(() => latencyChart.AddSample(network + pcProcess + buffer + renderer, network, pcProcess, buffer, renderer));
         };
         server.OnConfig += (enc, bitrate, bufferMs) => {
             capture.SetEncodingAndBitrate(enc, bitrate);
@@ -343,7 +343,7 @@ public class NetworkServer {
     public event Action<bool>? OnConnected;
     public event Action<string>? OnLog;
     public event Action<EncodingType, int, int>? OnConfig;
-    public event Action<int, int, int, int>? OnLatencyReport; // total, network, buffer, other
+    public event Action<int, int, int, int>? OnLatencyReport; // network, pcProcess, buffer, renderer
 
     public async Task StartAsync(int port, CancellationToken tk) {
         listener = new(IPAddress.Any, port); listener.Start();
@@ -356,7 +356,7 @@ public class NetworkServer {
                 OnConnected?.Invoke(true);
 
                 // TCP 粘包/拆包处理：环形缓冲 + 按长度解析完整包
-                const int HEADER_SIZE = 28;
+                const int HEADER_SIZE = 36;
                 var recvBuf = new byte[262144]; // 256KB 累积缓冲
                 int recvLen = 0; // 当前有效数据长度
                 var readBuf = new byte[65536]; // 64KB 读取缓冲
@@ -374,7 +374,7 @@ public class NetworkServer {
                     // 循环解析完整包
                     int offset = 0;
                     while (recvLen - offset >= HEADER_SIZE) {
-                        int payloadLen = BitConverter.ToInt32(recvBuf, offset + 24);
+                        int payloadLen = BitConverter.ToInt32(recvBuf, offset + 32);
                         int totalLen = HEADER_SIZE + payloadLen;
                         if (recvLen - offset < totalLen) break; // 数据不完整
 
@@ -389,16 +389,22 @@ public class NetworkServer {
                             int bufferMs = BitConverter.ToInt32(pkt.Payload, 5);
                             OnConfig?.Invoke(enc, bitrate, bufferMs);
                         }
+                        else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.LatencyReport && pkt.Payload.Length >= 16) {
+                            int network = BitConverter.ToInt32(pkt.Payload, 0);
+                            int pcProcess = BitConverter.ToInt32(pkt.Payload, 4);
+                            int buffer = BitConverter.ToInt32(pkt.Payload, 8);
+                            int renderer = BitConverter.ToInt32(pkt.Payload, 12);
+                            OnLatencyReport?.Invoke(network, pcProcess, buffer, renderer);
+                        }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.LatencyReport && pkt.Payload.Length >= 12) {
                             int total = BitConverter.ToInt32(pkt.Payload, 0);
-                            int network = BitConverter.ToInt32(pkt.Payload, 4);
-                            int buffer = BitConverter.ToInt32(pkt.Payload, 8);
-                            int other = total - network - buffer;
-                            OnLatencyReport?.Invoke(total, network, buffer, other);
+                            int net = BitConverter.ToInt32(pkt.Payload, 4);
+                            int buf = BitConverter.ToInt32(pkt.Payload, 8);
+                            OnLatencyReport?.Invoke(net, 0, buf, total - net - buf);
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.LatencyReport && pkt.Payload.Length >= 4) {
                             int latencyMs = BitConverter.ToInt32(pkt.Payload, 0);
-                            OnLatencyReport?.Invoke(latencyMs, latencyMs, 0, 0);
+                            OnLatencyReport?.Invoke(latencyMs, 0, 0, 0);
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.TimeSync && pkt.Payload.Length >= 8) {
                             // 时钟同步：回传手机时间戳 + PC时间戳 (16 bytes)
@@ -425,11 +431,12 @@ public class NetworkServer {
             finally { OnConnected?.Invoke(false); stream?.Close(); client?.Close(); }
         }
     }
-    public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm, long? captureTime = null) {
+    public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm, long? captureTime = null, long? encodeTime = null) {
         if (stream == null) return;
         var p = new AudioPacket { MsgType = MessageType.AudioData, Direction = StreamDirection.PcToPhone,
             Encoding = enc, Sequence = seq++,
             Timestamp = captureTime ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            EncodeTimestamp = encodeTime ?? 0,
             SampleRate = sr, Channels = ch, BitsPerSample = 16, Payload = data };
         await stream.WriteAsync(p.Serialize());
     }
@@ -663,13 +670,11 @@ public class AudioCaptureService {
         }
 
         if (encodingType == EncodingType.Opus) {
-            // Opus: 直接用原始采样率/声道，编码器内部处理
             lock (opusBuffer) {
                 opusBuffer.AddRange(rawShort);
             }
             FlushOpus(captureTime);
         } else {
-            // PCM/ADPCM: 重采样到 48kHz 立体声，匹配手机端 AudioRenderer
             const int outRate = 48000;
             float[] stereo48;
             if (sampleRate == outRate && srcChannels == 2) {
@@ -682,13 +687,14 @@ public class AudioCaptureService {
                 float s = Math.Clamp(stereo48[i], -1f, 1f);
                 shortBuf[i] = (short)(s * 32767f);
             }
+            long encodeTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (encodingType == EncodingType.Adpcm) {
                 byte[] adpcm = AdpcmCodec.Encode(shortBuf, 2);
-                _ = srv.SendAudioAsync(adpcm, outRate, 2, EncodingType.Adpcm, captureTime);
+                _ = srv.SendAudioAsync(adpcm, outRate, 2, EncodingType.Adpcm, captureTime, encodeTime);
             } else {
                 var pcm = new byte[shortBuf.Length * 2];
                 Buffer.BlockCopy(shortBuf, 0, pcm, 0, pcm.Length);
-                _ = srv.SendAudioAsync(pcm, outRate, 2, EncodingType.Pcm, captureTime);
+                _ = srv.SendAudioAsync(pcm, outRate, 2, EncodingType.Pcm, captureTime, encodeTime);
             }
         }
     }
@@ -737,9 +743,10 @@ public class AudioCaptureService {
                 byte[] outBuf = new byte[4000];
                 int encoded = encoder.Encode(frame, 0, frameSamples, outBuf, 0, outBuf.Length);
                 if (encoded > 0) {
+                    long encodeTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     var opus = new byte[encoded];
                     Array.Copy(outBuf, opus, encoded);
-                    _ = srv.SendAudioAsync(opus, sampleRate, (byte)channels, EncodingType.Opus, captureTime);
+                    _ = srv.SendAudioAsync(opus, sampleRate, (byte)channels, EncodingType.Opus, captureTime, encodeTime);
                 }
             }
         }
@@ -803,14 +810,15 @@ public enum EncodingType : byte { Pcm = 0, Opus = 1, Adpcm = 2 }
 public class AudioPacket {
     public MessageType MsgType; public ControlCommand? Command; public StreamDirection? Direction;
     public EncodingType Encoding;
-    public int Sequence; public long Timestamp; public int SampleRate;
+    public int Sequence; public long Timestamp; public long EncodeTimestamp;
+    public int SampleRate;
     public byte Channels, BitsPerSample; public byte[] Payload = [];
 
     public byte[] Serialize() {
         using var ms = new MemoryStream(); using var bw = new BinaryWriter(ms);
         bw.Write((byte)MsgType); bw.Write((byte?)(byte?)Command ?? 0xFF);
         bw.Write((byte?)(byte?)Direction ?? 0xFF); bw.Write((byte)Encoding);
-        bw.Write(Sequence); bw.Write(Timestamp);
+        bw.Write(Sequence); bw.Write(Timestamp); bw.Write(EncodeTimestamp);
         bw.Write(SampleRate); bw.Write(Channels); bw.Write(BitsPerSample); bw.Write((ushort)0);
         bw.Write(Payload.Length); if (Payload.Length > 0) bw.Write(Payload);
         return ms.ToArray();
@@ -821,7 +829,7 @@ public class AudioPacket {
         var c = br.ReadByte(); if (c != 0xFF) p.Command = (ControlCommand)c;
         var dr = br.ReadByte(); if (dr != 0xFF) p.Direction = (StreamDirection)dr;
         p.Encoding = (EncodingType)br.ReadByte();
-        p.Sequence = br.ReadInt32(); p.Timestamp = br.ReadInt64();
+        p.Sequence = br.ReadInt32(); p.Timestamp = br.ReadInt64(); p.EncodeTimestamp = br.ReadInt64();
         p.SampleRate = br.ReadInt32(); p.Channels = br.ReadByte(); p.BitsPerSample = br.ReadByte(); br.ReadUInt16();
         int len = br.ReadInt32(); if (len > 0) p.Payload = br.ReadBytes(len);
         return p;
@@ -882,8 +890,9 @@ public class LatencyChartPanel : Panel
     private const int MAX_SAMPLES = 300;
     private readonly int[] _total = new int[MAX_SAMPLES];
     private readonly int[] _network = new int[MAX_SAMPLES];
+    private readonly int[] _pcProcess = new int[MAX_SAMPLES];
     private readonly int[] _buffer = new int[MAX_SAMPLES];
-    private readonly int[] _other = new int[MAX_SAMPLES];
+    private readonly int[] _renderer = new int[MAX_SAMPLES];
     private int _head, _count;
     private readonly object _lock = new();
     private System.Windows.Forms.Timer _timer;
@@ -898,13 +907,14 @@ public class LatencyChartPanel : Panel
         _timer.Start();
     }
 
-    public void AddSample(int total, int network, int buffer, int other)
+    public void AddSample(int total, int network, int pcProcess, int buffer, int renderer)
     {
         lock (_lock) {
             _total[_head] = total;
             _network[_head] = Math.Max(network, 0);
+            _pcProcess[_head] = Math.Max(pcProcess, 0);
             _buffer[_head] = Math.Max(buffer, 0);
-            _other[_head] = Math.Max(other, 0);
+            _renderer[_head] = Math.Max(renderer, 0);
             _head = (_head + 1) % MAX_SAMPLES;
             if (_count < MAX_SAMPLES) _count++;
         }
@@ -924,14 +934,14 @@ public class LatencyChartPanel : Panel
         int w = Width, h = Height;
         if (w < 10 || h < 10) return;
 
-        int[] sTotal, sNet, sBuf, sOther;
+        int[] sTotal, sNet, sPc, sBuf, sRen;
         int snapCount;
         lock (_lock) {
-            sTotal = new int[_count]; sNet = new int[_count]; sBuf = new int[_count]; sOther = new int[_count];
+            sTotal = new int[_count]; sNet = new int[_count]; sPc = new int[_count]; sBuf = new int[_count]; sRen = new int[_count];
             int start = (_head - _count + MAX_SAMPLES) % MAX_SAMPLES;
             for (int i = 0; i < _count; i++) {
                 int idx = (start + i) % MAX_SAMPLES;
-                sTotal[i] = _total[idx]; sNet[i] = _network[idx]; sBuf[i] = _buffer[idx]; sOther[i] = _other[idx];
+                sTotal[i] = _total[idx]; sNet[i] = _network[idx]; sPc[i] = _pcProcess[idx]; sBuf[i] = _buffer[idx]; sRen[i] = _renderer[idx];
             }
             snapCount = _count;
         }
@@ -945,14 +955,14 @@ public class LatencyChartPanel : Panel
 
         // 统计
         int minV = int.MaxValue, maxV = 0, sumV = 0;
-        int sumNet = 0, sumBuf = 0, sumOther = 0;
+        int sumNet = 0, sumPc = 0, sumBuf = 0, sumRen = 0;
         for (int i = 0; i < snapCount; i++) {
             if (sTotal[i] < minV) minV = sTotal[i];
             if (sTotal[i] > maxV) maxV = sTotal[i];
-            sumV += sTotal[i]; sumNet += sNet[i]; sumBuf += sBuf[i]; sumOther += sOther[i];
+            sumV += sTotal[i]; sumNet += sNet[i]; sumPc += sPc[i]; sumBuf += sBuf[i]; sumRen += sRen[i];
         }
         int avgV = sumV / snapCount;
-        int avgNet = sumNet / snapCount, avgBuf = sumBuf / snapCount, avgOther = sumOther / snapCount;
+        int avgNet = sumNet / snapCount, avgPc = sumPc / snapCount, avgBuf = sumBuf / snapCount, avgRen = sumRen / snapCount;
 
         // Y轴范围
         int yMax = Math.Max(maxV + 10, 50);
@@ -979,25 +989,25 @@ public class LatencyChartPanel : Panel
         float Y(int v) => padT + plotH * (1f - (float)(v - yMin) / (yMax - yMin));
         float X(int i) => padL + (float)i / (snapCount - 1) * plotW;
 
-        // 堆叠区域: 从下到上: other(蓝) → network(绿) → buffer(橙) → 总线
-        // 计算堆叠基线
-        var baseOther = new float[snapCount]; // other 底部 = 0
-        var topOther = new float[snapCount];  // other 顶部
-        var topNet = new float[snapCount];    // network 顶部
-        var topBuf = new float[snapCount];    // buffer 顶部
+        // 堆叠区域: 从下到上: renderer(紫) → pcProcess(蓝) → network(绿) → buffer(橙) → 总线
+        var baseRen = new float[snapCount];
+        var topRen = new float[snapCount];
+        var topPc = new float[snapCount];
+        var topNet = new float[snapCount];
+        var topBuf = new float[snapCount];
 
         for (int i = 0; i < snapCount; i++) {
-            float yBottom = Y(0);
-            baseOther[i] = yBottom;
-            topOther[i] = Y(sOther[i]);
-            topNet[i] = Y(sOther[i] + sNet[i]);
-            topBuf[i] = Y(sOther[i] + sNet[i] + sBuf[i]);
+            baseRen[i] = Y(0);
+            topRen[i] = Y(sRen[i]);
+            topPc[i] = Y(sRen[i] + sPc[i]);
+            topNet[i] = Y(sRen[i] + sPc[i] + sNet[i]);
+            topBuf[i] = Y(sRen[i] + sPc[i] + sNet[i] + sBuf[i]);
         }
 
-        // 绘制堆叠填充
-        DrawStackedArea(g, snapCount, X, topNet, topBuf, Color.FromArgb(100, 255, 160, 60));  // buffer 橙
-        DrawStackedArea(g, snapCount, X, topOther, topNet, Color.FromArgb(100, 60, 200, 120)); // network 绿
-        DrawStackedArea(g, snapCount, X, baseOther, topOther, Color.FromArgb(80, 80, 140, 255)); // other 蓝
+        DrawStackedArea(g, snapCount, X, topNet, topBuf, Color.FromArgb(100, 255, 160, 60));   // buffer 橙
+        DrawStackedArea(g, snapCount, X, topPc, topNet, Color.FromArgb(100, 60, 200, 120));    // network 绿
+        DrawStackedArea(g, snapCount, X, topRen, topPc, Color.FromArgb(80, 80, 140, 255));     // pcProcess 蓝
+        DrawStackedArea(g, snapCount, X, baseRen, topRen, Color.FromArgb(80, 180, 100, 220));   // renderer 紫
 
         // 总线
         var pts = new PointF[snapCount];
@@ -1017,9 +1027,10 @@ public class LatencyChartPanel : Panel
 
         // 分项图例
         lx -= 8;
-        DrawLegend(g, ref lx, $"网络 {avgNet}ms", Color.FromArgb(200, 60, 200, 120), legFont);
         DrawLegend(g, ref lx, $"缓冲 {avgBuf}ms", Color.FromArgb(200, 255, 160, 60), legFont);
-        DrawLegend(g, ref lx, $"其他 {avgOther}ms", Color.FromArgb(200, 80, 140, 255), legFont);
+        DrawLegend(g, ref lx, $"网络 {avgNet}ms", Color.FromArgb(200, 60, 200, 120), legFont);
+        DrawLegend(g, ref lx, $"PC {avgPc}ms", Color.FromArgb(200, 80, 140, 255), legFont);
+        DrawLegend(g, ref lx, $"渲染 {avgRen}ms", Color.FromArgb(200, 180, 100, 220), legFont);
     }
 
     private static void DrawStackedArea(Graphics g, int count, Func<int, float> X, float[] yTop, float[] yBottom, Color color)
