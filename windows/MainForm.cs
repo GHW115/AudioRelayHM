@@ -638,9 +638,7 @@ public class LowLatencyLoopbackCapture : IDisposable {
                 if (bytes > 0 && (flags & NAudio.CoreAudioApi.AudioClientBufferFlags.Silent) == 0) {
                     var data = new byte[bytes];
                     Marshal.Copy(buffer, data, 0, bytes);
-                    // 异步触发事件，避免阻塞采集线程
-                    var args = new NAudio.Wave.WaveInEventArgs(data, bytes);
-                    ThreadPool.QueueUserWorkItem(_ => DataAvailable?.Invoke(this, args));
+                    DataAvailable?.Invoke(this, new NAudio.Wave.WaveInEventArgs(data, bytes));
                 }
                 capture.ReleaseBuffer(frames);
                 available = capture.GetNextPacketSize();
