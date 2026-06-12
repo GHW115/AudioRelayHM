@@ -597,6 +597,7 @@ public class LowLatencyLoopbackCapture : IDisposable {
     private NAudio.Wave.WaveFormat? _format;
     private Thread? _captureThread;
     private volatile bool _stop;
+    private System.Threading.EventWaitHandle? _eventHandle;
 
     public NAudio.Wave.WaveFormat WaveFormat => _format!;
     public event EventHandler<NAudio.Wave.WaveInEventArgs>? DataAvailable;
@@ -607,11 +608,14 @@ public class LowLatencyLoopbackCapture : IDisposable {
         _audioClient = _device.AudioClient;
         _format = _audioClient.MixFormat;
 
-        // 20ms 缓冲（100纳秒单位），远低于默认的 100ms
-        long bufferPeriod = 200_000; // 20ms
+        // 30ms 缓冲（100纳秒单位），平衡延迟和兼容性
+        long bufferPeriod = 300_000; // 30ms
         _audioClient.Initialize(NAudio.CoreAudioApi.AudioClientShareMode.Shared,
-            NAudio.CoreAudioApi.AudioClientStreamFlags.Loopback,
+            NAudio.CoreAudioApi.AudioClientStreamFlags.Loopback | NAudio.CoreAudioApi.AudioClientStreamFlags.EventCallback,
             bufferPeriod, 0, _format, Guid.Empty);
+
+        _eventHandle = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset);
+        _audioClient.SetEventHandle(_eventHandle.SafeWaitHandle.DangerousGetHandle());
 
         _stop = false;
         _captureThread = new Thread(CaptureLoop) { Priority = ThreadPriority.Highest, IsBackground = true };
@@ -624,17 +628,22 @@ public class LowLatencyLoopbackCapture : IDisposable {
         _audioClient.Start();
 
         while (!_stop) {
-            Thread.Sleep(1); // 1ms 轮询，配合 20ms 缓冲
+            // 事件驱动：等待 WASAPI 通知数据就绪（比 1ms 轮询更高效）
+            if (!_eventHandle!.WaitOne(100)) continue;
+
             int available = capture.GetNextPacketSize();
-            if (available > 0) {
+            while (available > 0) {
                 var buffer = capture.GetBuffer(out int frames, out var flags);
                 int bytes = frames * frameBytes;
                 if (bytes > 0 && (flags & NAudio.CoreAudioApi.AudioClientBufferFlags.Silent) == 0) {
                     var data = new byte[bytes];
                     Marshal.Copy(buffer, data, 0, bytes);
-                    DataAvailable?.Invoke(this, new NAudio.Wave.WaveInEventArgs(data, bytes));
+                    // 异步触发事件，避免阻塞采集线程
+                    var args = new NAudio.Wave.WaveInEventArgs(data, bytes);
+                    ThreadPool.QueueUserWorkItem(_ => DataAvailable?.Invoke(this, args));
                 }
                 capture.ReleaseBuffer(frames);
+                available = capture.GetNextPacketSize();
             }
         }
         _audioClient.Stop();
@@ -642,11 +651,13 @@ public class LowLatencyLoopbackCapture : IDisposable {
 
     public void Stop() {
         _stop = true;
+        _eventHandle?.Set(); // 唤醒等待中的线程稈
         _captureThread?.Join(2000);
     }
 
     public void Dispose() {
         Stop();
+        _eventHandle?.Dispose();
         _audioClient?.Dispose();
         _device?.Dispose();
     }
