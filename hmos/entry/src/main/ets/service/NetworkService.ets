@@ -31,6 +31,7 @@ export class NetworkService {
   private _state: ConnectionState = ConnectionState.DISCONNECTED;
   private sequenceNumber: number = 0;
   private heartbeatTimer: number = -1;
+  private autoReconnectTimer: number = -1;
   private readonly HEADER_SIZE: number = 44;
   private recvBuf: ArrayBuffer = new ArrayBuffer(0);
   private recvView: Uint8Array = new Uint8Array(0);
@@ -48,6 +49,12 @@ export class NetworkService {
     if (this._state === ConnectionState.CONNECTING ||
       this._state === ConnectionState.CONNECTED) {
       return;
+    }
+
+    // 取消可能存在的自动重连
+    if (this.autoReconnectTimer !== -1) {
+      clearTimeout(this.autoReconnectTimer);
+      this.autoReconnectTimer = -1;
     }
 
     this.host = host;
@@ -106,6 +113,10 @@ export class NetworkService {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+    if (this.autoReconnectTimer !== -1) {
+      clearTimeout(this.autoReconnectTimer);
+      this.autoReconnectTimer = -1;
+    }
     this.closeUdpSocket();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
@@ -258,7 +269,7 @@ export class NetworkService {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       void this.sendControl(ControlCommand.HEARTBEAT);
-    }, 5000);
+    }, 1000); // 1秒心跳，防止系统限制网络时TCP超时
   }
 
   private stopHeartbeat(): void {
@@ -277,6 +288,16 @@ export class NetworkService {
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
     console.info('[NetworkService] Connection closed');
+
+    // 自动重连：2秒后尝试重新连接
+    if (this.host) {
+      this.autoReconnectTimer = setTimeout(() => {
+        console.info('[NetworkService] 尝试自动重连...');
+        this.connect(this.host, this.controlPort).catch((err: Error) => {
+          console.error(`[NetworkService] 自动重连失败: ${err.message}`);
+        });
+      }, 2000);
+    }
   }
 
   /**
@@ -296,6 +317,20 @@ export class NetworkService {
       // 监听 UDP 消息（PC 端发送的音频数据）
       this.udpSocket.on('message', (info: socket.SocketMessageInfo) => {
         this.handleUdpData(info.message);
+      });
+
+      this.udpSocket.on('error', (err: BusinessError) => {
+        console.error(`[NetworkService] UDP error: ${err.message}`);
+        // UDP 错误不触发断连，尝试重建
+        this.setupUdpSocket().catch(() => {});
+      });
+
+      this.udpSocket.on('close', () => {
+        console.info('[NetworkService] UDP socket closed');
+        // 如果仍在连接状态，尝试重建 UDP
+        if (this._state === ConnectionState.CONNECTED) {
+          this.setupUdpSocket().catch(() => {});
+        }
       });
 
       console.info(`[NetworkService] UDP socket bound to port ${this.udpPort}`);
