@@ -187,7 +187,7 @@ export class AudioPlay {
       });
 
       // 处理音频中断（其他 app 播放声音时）
-      this.audioRenderer.on('audioInterrupt', (interruptEvent: audio.AudioInterruptEvent) => {
+      this.audioRenderer.on('audioInterrupt', (interruptEvent: audio.InterruptEvent) => {
         if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN) {
           console.info('[AudioPlay] 音频中断开始（其他 app 播放声音）');
           // 不主动 stop，让系统自动处理，保持连接不断
