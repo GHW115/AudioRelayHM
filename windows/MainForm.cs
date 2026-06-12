@@ -338,45 +338,57 @@ public class MainForm : Form
 // 网络服务
 public class NetworkServer {
     private TcpListener? listener; private TcpClient? client; private NetworkStream? stream;
+    private UdpClient? udpSend; private UdpClient? udpRecv;
+    private IPEndPoint? phoneEndPoint;
     private int seq; public bool Connected => client?.Connected ?? false;
     public event Action<AudioPacket>? OnAudioData;
     public event Action<bool>? OnConnected;
     public event Action<string>? OnLog;
     public event Action<EncodingType, int, int>? OnConfig;
     public event Action<int, int, int, int>? OnLatencyReport; // network, pcProcess, buffer, renderer
+    private const int UDP_PORT = 9288;
 
     public async Task StartAsync(int port, CancellationToken tk) {
         listener = new(IPAddress.Any, port); listener.Start();
-        OnLog?.Invoke($"监听端口 {port}");
+        OnLog?.Invoke($"监听端口 {port} (TCP 控制 + UDP {UDP_PORT} 音频)");
         while (!tk.IsCancellationRequested) {
             try {
                 client = await listener.AcceptTcpClientAsync(tk);
                 client.NoDelay = true;
                 stream = client.GetStream();
+
+                // 获取手机端 IP，用于 UDP 发送
+                var remoteEp = client.Client.RemoteEndPoint as IPEndPoint;
+                phoneEndPoint = new IPEndPoint(remoteEp!.Address, UDP_PORT);
+                OnLog?.Invoke($"手机端 IP: {remoteEp.Address}，UDP 目标端口 {UDP_PORT}");
+
+                // 启动 UDP 接收（双向音频）
+                udpRecv = new UdpClient(UDP_PORT);
+                udpSend = new UdpClient();
+                _ = Task.Run(() => UdpReceiveLoop(tk), tk);
+
                 OnConnected?.Invoke(true);
 
-                // TCP 粘包/拆包处理：环形缓冲 + 按长度解析完整包
+                // TCP 只处理控制消息（音频走 UDP）
                 const int HEADER_SIZE = 44;
-                var recvBuf = new byte[262144]; // 256KB 累积缓冲
-                int recvLen = 0; // 当前有效数据长度
-                var readBuf = new byte[65536]; // 64KB 读取缓冲
+                var recvBuf = new byte[262144];
+                int recvLen = 0;
+                var readBuf = new byte[65536];
 
                 while (client.Connected && !tk.IsCancellationRequested) {
                     int n = await stream.ReadAsync(readBuf, 0, readBuf.Length, tk);
                     if (n == 0) break;
 
-                    // 追加到累积缓冲区（如果不够大则扩容）
                     if (recvLen + n > recvBuf.Length)
                         Array.Resize(ref recvBuf, (recvLen + n) * 2);
                     Array.Copy(readBuf, 0, recvBuf, recvLen, n);
                     recvLen += n;
 
-                    // 循环解析完整包
                     int offset = 0;
                     while (recvLen - offset >= HEADER_SIZE) {
                         int payloadLen = BitConverter.ToInt32(recvBuf, offset + 40);
                         int totalLen = HEADER_SIZE + payloadLen;
-                        if (recvLen - offset < totalLen) break; // 数据不完整
+                        if (recvLen - offset < totalLen) break;
 
                         var pktData = new byte[totalLen];
                         Array.Copy(recvBuf, offset, pktData, 0, totalLen);
@@ -407,11 +419,10 @@ public class NetworkServer {
                             OnLatencyReport?.Invoke(latencyMs, 0, 0, 0);
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.TimeSync && pkt.Payload.Length >= 8) {
-                            // 时钟同步：回传手机时间戳 + PC时间戳 (16 bytes)
                             long pcTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             var reply = new byte[16];
-                            Array.Copy(pkt.Payload, 0, reply, 0, 8); // 回传手机时间戳
-                            BitConverter.GetBytes(pcTime).CopyTo(reply, 8); // PC时间戳
+                            Array.Copy(pkt.Payload, 0, reply, 0, 8);
+                            BitConverter.GetBytes(pcTime).CopyTo(reply, 8);
                             var ack = new AudioPacket { MsgType = MessageType.Control, Command = ControlCommand.TimeSync,
                                 Sequence = seq++, Timestamp = pcTime, SampleRate = 0, Channels = 0, BitsPerSample = 0, Payload = reply };
                             if (stream != null) await stream.WriteAsync(ack.Serialize());
@@ -419,7 +430,6 @@ public class NetworkServer {
                         offset += totalLen;
                     }
 
-                    // 将未解析的数据移到缓冲头部
                     if (offset > 0) {
                         int remaining = recvLen - offset;
                         if (remaining > 0) Array.Copy(recvBuf, offset, recvBuf, 0, remaining);
@@ -428,11 +438,37 @@ public class NetworkServer {
                 }
             } catch (OperationCanceledException) { break; }
             catch (Exception ex) { OnLog?.Invoke($"连接异常: {ex.Message}"); }
-            finally { OnConnected?.Invoke(false); stream?.Close(); client?.Close(); }
+            finally {
+                OnConnected?.Invoke(false);
+                try { udpRecv?.Close(); } catch { }
+                try { udpSend?.Close(); } catch { }
+                udpRecv = null; udpSend = null; phoneEndPoint = null;
+                stream?.Close(); client?.Close();
+            }
         }
     }
+
+    private async Task UdpReceiveLoop(CancellationToken tk) {
+        var udp = udpRecv;
+        if (udp == null) return;
+        try {
+            while (!tk.IsCancellationRequested) {
+                var result = await udp.ReceiveAsync(tk);
+                // 首次收到手机 UDP 包时更新 phoneEndPoint
+                if (phoneEndPoint == null) {
+                    phoneEndPoint = result.RemoteEndPoint;
+                    OnLog?.Invoke($"UDP 手机端点已记录: {result.RemoteEndPoint}");
+                }
+                var pkt = AudioPacket.Deserialize(result.Buffer);
+                if (pkt.MsgType == MessageType.AudioData) OnAudioData?.Invoke(pkt);
+            }
+        } catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex) { OnLog?.Invoke($"UDP 接收异常: {ex.Message}"); }
+    }
+
     public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm, long? captureTime = null, long? encodeTime = null) {
-        if (stream == null) return;
+        if (udpSend == null || phoneEndPoint == null) return;
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var p = new AudioPacket { MsgType = MessageType.AudioData, Direction = StreamDirection.PcToPhone,
             Encoding = enc, Sequence = seq++,
@@ -440,9 +476,15 @@ public class NetworkServer {
             EncodeTimestamp = encodeTime ?? now,
             SendTimestamp = now,
             SampleRate = sr, Channels = ch, BitsPerSample = 16, Payload = data };
-        await stream.WriteAsync(p.Serialize());
+        var pktBytes = p.Serialize();
+        await udpSend.SendAsync(pktBytes, pktBytes.Length, phoneEndPoint);
     }
-    public void Stop() { stream?.Close(); client?.Close(); listener?.Stop(); }
+    public void Stop() {
+        try { udpRecv?.Close(); } catch { }
+        try { udpSend?.Close(); } catch { }
+        udpRecv = null; udpSend = null; phoneEndPoint = null;
+        stream?.Close(); client?.Close(); listener?.Stop();
+    }
 }
 
 // ========== ADPCM 编解码器 ==========

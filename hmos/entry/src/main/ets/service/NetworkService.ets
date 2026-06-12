@@ -23,8 +23,10 @@ export enum ConnectionState {
  */
 export class NetworkService {
   private tcpSocket: socket.TCPSocket | null = null;
+  private udpSocket: socket.UDPSocket | null = null;
   private host: string = '';
   private controlPort: number = 9287;
+  private readonly udpPort: number = 9288;
 
   private _state: ConnectionState = ConnectionState.DISCONNECTED;
   private sequenceNumber: number = 0;
@@ -84,8 +86,9 @@ export class NetworkService {
 
       await this.sendHandshake();
       this.startHeartbeat();
+      await this.setupUdpSocket();
 
-      console.info(`[NetworkService] Connected to ${host}:${port}`);
+      console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + UDP ${this.udpPort} audio)`);
     } catch (err) {
       this._state = ConnectionState.DISCONNECTED;
       this.onStateChange?.(this._state);
@@ -103,6 +106,7 @@ export class NetworkService {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+    this.closeUdpSocket();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
 
@@ -120,6 +124,11 @@ export class NetworkService {
 
   async sendAudioData(direction: StreamDirection, pcmData: ArrayBuffer,
     sampleRate: number, channels: number, encodingType?: number): Promise<void> {
+    if (!this.udpSocket || this._state !== ConnectionState.CONNECTED) {
+      console.warn('[NetworkService] Cannot send audio: UDP not ready');
+      return;
+    }
+
     const packet = new AudioPacket();
     packet.msgType = MessageType.AUDIO_DATA;
     packet.direction = direction;
@@ -132,7 +141,19 @@ export class NetworkService {
     // 手机端始终发送 PCM（无 Opus 编码器），编码选择仅控制 Windows 端捕获
     packet.encodingType = EncodingType.PCM;
 
-    await this.sendPacket(packet);
+    try {
+      const data = packet.serialize();
+      const sendOpts: socket.UDPSendOptions = {
+        data: data,
+        address: {
+          address: this.host,
+          port: this.udpPort,
+        },
+      };
+      await this.udpSocket.send(sendOpts);
+    } catch (err) {
+      console.error(`[NetworkService] UDP audio send failed: ${err}`);
+    }
   }
 
   async sendConfig(encoding: number, bitrate: number, bufferMs: number): Promise<void> {
@@ -252,8 +273,69 @@ export class NetworkService {
       return;
     }
     this.stopHeartbeat();
+    this.closeUdpSocket();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
     console.info('[NetworkService] Connection closed');
+  }
+
+  /**
+   * 创建并绑定 UDP socket，用于双向音频传输
+   */
+  private async setupUdpSocket(): Promise<void> {
+    try {
+      this.udpSocket = socket.constructUDPSocketInstance();
+
+      // 绑定本地 UDP 端口 9288 以接收 PC 端音频
+      const bindAddr: socket.NetAddress = {
+        address: '0.0.0.0',
+        port: this.udpPort,
+      };
+      await this.udpSocket.bind(bindAddr);
+
+      // 监听 UDP 消息（PC 端发送的音频数据）
+      this.udpSocket.on('message', (info: socket.SocketMessageInfo) => {
+        this.handleUdpData(info.message);
+      });
+
+      console.info(`[NetworkService] UDP socket bound to port ${this.udpPort}`);
+    } catch (err) {
+      console.error(`[NetworkService] UDP setup failed: ${err}`);
+      this.udpSocket = null;
+    }
+  }
+
+  /**
+   * 处理 UDP 接收到的音频数据（无需 TCP 粘包处理）
+   */
+  private handleUdpData(data: ArrayBuffer | string): void {
+    try {
+      let buf: ArrayBuffer;
+      if (typeof data === 'string') {
+        buf = new util.TextEncoder().encodeInto(data).buffer.slice(0);
+      } else {
+        buf = data.slice(0);
+      }
+
+      const packet = AudioPacket.deserialize(buf);
+      if (packet.msgType === MessageType.AUDIO_DATA) {
+        this.onAudioData?.(packet);
+      }
+    } catch (err) {
+      console.error(`[NetworkService] UDP parse failed: ${err}`);
+    }
+  }
+
+  /**
+   * 关闭 UDP socket
+   */
+  private closeUdpSocket(): void {
+    try {
+      this.udpSocket?.off('message');
+      this.udpSocket?.close();
+    } catch (err) {
+      console.error(`[NetworkService] UDP close error: ${err}`);
+    }
+    this.udpSocket = null;
   }
 }
