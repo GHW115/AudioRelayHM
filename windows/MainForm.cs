@@ -590,9 +590,71 @@ public static class AdpcmCodec
     }
 }
 
+// ========== 低延迟 WASAPI 环回捕获 ==========
+public class LowLatencyLoopbackCapture : IDisposable {
+    private NAudio.CoreAudioApi.MMDevice? _device;
+    private NAudio.CoreAudioApi.AudioClient? _audioClient;
+    private NAudio.Wave.WaveFormat? _format;
+    private Thread? _captureThread;
+    private volatile bool _stop;
+
+    public NAudio.Wave.WaveFormat WaveFormat => _format!;
+    public event EventHandler<NAudio.Wave.WaveInEventArgs>? DataAvailable;
+
+    public void Start() {
+        var enumerator = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+        _device = enumerator.GetDefaultAudioEndpoint(NAudio.CoreAudioApi.DataFlow.Render, NAudio.CoreAudioApi.Role.Multimedia);
+        _audioClient = _device.AudioClient;
+        _format = _audioClient.MixFormat;
+
+        // 20ms 缓冲（100纳秒单位），远低于默认的 100ms
+        long bufferPeriod = 200_000; // 20ms
+        _audioClient.Initialize(NAudio.CoreAudioApi.AudioClientShareMode.Shared,
+            NAudio.CoreAudioApi.AudioClientStreamFlags.Loopback,
+            bufferPeriod, 0, _format, Guid.Empty);
+
+        _stop = false;
+        _captureThread = new Thread(CaptureLoop) { Priority = ThreadPriority.Highest, IsBackground = true };
+        _captureThread.Start();
+    }
+
+    private void CaptureLoop() {
+        var capture = _audioClient!.AudioCaptureClient;
+        int frameBytes = _format!.Channels * _format.BitsPerSample / 8;
+        _audioClient.Start();
+
+        while (!_stop) {
+            Thread.Sleep(1); // 1ms 轮询，配合 20ms 缓冲
+            int available = capture.GetNextPacketSize();
+            if (available > 0) {
+                var buffer = capture.GetBuffer(out int frames, out var flags);
+                int bytes = frames * frameBytes;
+                if (bytes > 0 && (flags & NAudio.CoreAudioApi.AudioClientBufferFlags.Silent) == 0) {
+                    var data = new byte[bytes];
+                    Marshal.Copy(buffer, data, 0, bytes);
+                    DataAvailable?.Invoke(this, new NAudio.Wave.WaveInEventArgs(data, bytes));
+                }
+                capture.ReleaseBuffer(frames);
+            }
+        }
+        _audioClient.Stop();
+    }
+
+    public void Stop() {
+        _stop = true;
+        _captureThread?.Join(2000);
+    }
+
+    public void Dispose() {
+        Stop();
+        _audioClient?.Dispose();
+        _device?.Dispose();
+    }
+}
+
 // ========== 音频捕获 ==========
 public class AudioCaptureService {
-    private WasapiLoopbackCapture? cap;
+    private LowLatencyLoopbackCapture? cap;
     private NetworkServer? srv;
     private EncodingType encodingType = EncodingType.Opus;
     private int sampleRate = 48000;
@@ -636,9 +698,10 @@ public class AudioCaptureService {
 
     public void Start() {
         cap = new();
+        cap.Start(); // 先启动以获取格式信息
         sampleRate = cap.WaveFormat.SampleRate;
         channels = cap.WaveFormat.Channels;
-        OnLog?.Invoke($"WASAPI 格式: {sampleRate}Hz, {channels}ch, 32bit float");
+        OnLog?.Invoke($"WASAPI 格式: {sampleRate}Hz, {channels}ch, 32bit float (低延迟 20ms 缓冲)");
 
         if (encodingType == EncodingType.Opus) {
             opusEncoder = new OpusEncoder(sampleRate, channels, OpusApplication.OPUS_APPLICATION_AUDIO);
@@ -647,12 +710,25 @@ public class AudioCaptureService {
         }
 
         cap.DataAvailable += OnDataAvailable;
-        cap.StartRecording();
+        _callbackCount2 = 0;
         OnLog?.Invoke($"音频捕获已启动 ({encodingType})");
     }
 
+    private DateTime _lastCallbackTime;
+    private int _callbackCount2;
+
     private void OnDataAvailable(object? sender, NAudio.Wave.WaveInEventArgs e) {
         if (srv?.Connected != true || e.BytesRecorded <= 0) return;
+
+        // WASAPI 回调间隔测量
+        var now2 = DateTime.UtcNow;
+        if (_callbackCount2 > 0 && _callbackCount2 <= 5) {
+            var interval = (now2 - _lastCallbackTime).TotalMilliseconds;
+            var bufMs = e.BytesRecorded / (4.0 * channels) / sampleRate * 1000;
+            OnLog?.Invoke($"[WASAPI] 回调#{_callbackCount2}: 间隔={interval:F1}ms, 缓冲={e.BytesRecorded}B={bufMs:F1}ms");
+        }
+        _lastCallbackTime = now2;
+        _callbackCount2++;
 
         // 在最早处捕获时间戳，用于端到端延迟测量
         long captureTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -757,7 +833,7 @@ public class AudioCaptureService {
     public void Stop() {
         if (cap != null) {
             cap.DataAvailable -= OnDataAvailable;
-            cap.StopRecording(); cap.Dispose(); cap = null;
+            cap.Stop(); cap.Dispose(); cap = null;
         }
         opusEncoder?.Dispose();
         opusEncoder = null;
