@@ -127,8 +127,8 @@ public class MainForm : Form
                 playback.WriteData(pcm);
             } else playback.WriteData(pkt.Payload);
         };
-        server.OnLatencyReport += (latencyMs) => {
-            Invoke(() => latencyChart.AddSample(latencyMs));
+        server.OnLatencyReport += (total, network, buffer, other) => {
+            Invoke(() => latencyChart.AddSample(total, network, buffer, other));
         };
         server.OnConfig += (enc, bitrate, bufferMs) => {
             capture.SetEncodingAndBitrate(enc, bitrate);
@@ -176,13 +176,13 @@ public class MainForm : Form
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 30), AutoSize = true };
         capCard.Controls.AddRange([lblCapTitle, lblCaptureInfo]);
         // 延迟曲线卡片
-        var latCard = new RoundedPanel { Location = new Point(0, 264), Size = new Size(580, 108) };
+        var latCard = new RoundedPanel { Location = new Point(0, 264), Size = new Size(580, 130) };
         var lblLatTitle = new Label { Text = "端到端延迟", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(113, 128, 150), Location = new Point(16, 4), AutoSize = true };
-        latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(556, 80) };
+        latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(556, 102) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
         // 日志区域
-        txtLog = new TextBox { Location = new Point(0, 380), Size = new Size(580, 108),
+        txtLog = new TextBox { Location = new Point(0, 402), Size = new Size(580, 108),
             Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
             BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.FromArgb(100, 220, 150),
             Font = new Font("Consolas", 9), BorderStyle = BorderStyle.None };
@@ -343,7 +343,7 @@ public class NetworkServer {
     public event Action<bool>? OnConnected;
     public event Action<string>? OnLog;
     public event Action<EncodingType, int, int>? OnConfig;
-    public event Action<int>? OnLatencyReport;
+    public event Action<int, int, int, int>? OnLatencyReport; // total, network, buffer, other
 
     public async Task StartAsync(int port, CancellationToken tk) {
         listener = new(IPAddress.Any, port); listener.Start();
@@ -389,9 +389,16 @@ public class NetworkServer {
                             int bufferMs = BitConverter.ToInt32(pkt.Payload, 5);
                             OnConfig?.Invoke(enc, bitrate, bufferMs);
                         }
+                        else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.LatencyReport && pkt.Payload.Length >= 12) {
+                            int total = BitConverter.ToInt32(pkt.Payload, 0);
+                            int network = BitConverter.ToInt32(pkt.Payload, 4);
+                            int buffer = BitConverter.ToInt32(pkt.Payload, 8);
+                            int other = total - network - buffer;
+                            OnLatencyReport?.Invoke(total, network, buffer, other);
+                        }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.LatencyReport && pkt.Payload.Length >= 4) {
                             int latencyMs = BitConverter.ToInt32(pkt.Payload, 0);
-                            OnLatencyReport?.Invoke(latencyMs);
+                            OnLatencyReport?.Invoke(latencyMs, latencyMs, 0, 0);
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.TimeSync && pkt.Payload.Length >= 8) {
                             // 时钟同步：回传手机时间戳 + PC时间戳 (16 bytes)
@@ -869,12 +876,15 @@ public class NavButton : Panel {
     }
 }
 
-// 延迟曲线图表
+// 延迟曲线图表（堆叠显示）
 public class LatencyChartPanel : Panel
 {
-    private readonly int[] _samples = new int[300]; // 300个采样点 (~30s @ 100ms刷新)
-    private int _head;
-    private int _count;
+    private const int MAX_SAMPLES = 300;
+    private readonly int[] _total = new int[MAX_SAMPLES];
+    private readonly int[] _network = new int[MAX_SAMPLES];
+    private readonly int[] _buffer = new int[MAX_SAMPLES];
+    private readonly int[] _other = new int[MAX_SAMPLES];
+    private int _head, _count;
     private readonly object _lock = new();
     private System.Windows.Forms.Timer _timer;
 
@@ -888,12 +898,15 @@ public class LatencyChartPanel : Panel
         _timer.Start();
     }
 
-    public void AddSample(int latencyMs)
+    public void AddSample(int total, int network, int buffer, int other)
     {
         lock (_lock) {
-            _samples[_head] = latencyMs;
-            _head = (_head + 1) % _samples.Length;
-            if (_count < _samples.Length) _count++;
+            _total[_head] = total;
+            _network[_head] = Math.Max(network, 0);
+            _buffer[_head] = Math.Max(buffer, 0);
+            _other[_head] = Math.Max(other, 0);
+            _head = (_head + 1) % MAX_SAMPLES;
+            if (_count < MAX_SAMPLES) _count++;
         }
     }
 
@@ -911,13 +924,15 @@ public class LatencyChartPanel : Panel
         int w = Width, h = Height;
         if (w < 10 || h < 10) return;
 
-        int[] snap;
+        int[] sTotal, sNet, sBuf, sOther;
         int snapCount;
         lock (_lock) {
-            snap = new int[_count];
-            int start = (_head - _count + _samples.Length) % _samples.Length;
-            for (int i = 0; i < _count; i++)
-                snap[i] = _samples[(start + i) % _samples.Length];
+            sTotal = new int[_count]; sNet = new int[_count]; sBuf = new int[_count]; sOther = new int[_count];
+            int start = (_head - _count + MAX_SAMPLES) % MAX_SAMPLES;
+            for (int i = 0; i < _count; i++) {
+                int idx = (start + i) % MAX_SAMPLES;
+                sTotal[i] = _total[idx]; sNet[i] = _network[idx]; sBuf[i] = _buffer[idx]; sOther[i] = _other[idx];
+            }
             snapCount = _count;
         }
 
@@ -930,19 +945,21 @@ public class LatencyChartPanel : Panel
 
         // 统计
         int minV = int.MaxValue, maxV = 0, sumV = 0;
+        int sumNet = 0, sumBuf = 0, sumOther = 0;
         for (int i = 0; i < snapCount; i++) {
-            if (snap[i] < minV) minV = snap[i];
-            if (snap[i] > maxV) maxV = snap[i];
-            sumV += snap[i];
+            if (sTotal[i] < minV) minV = sTotal[i];
+            if (sTotal[i] > maxV) maxV = sTotal[i];
+            sumV += sTotal[i]; sumNet += sNet[i]; sumBuf += sBuf[i]; sumOther += sOther[i];
         }
         int avgV = sumV / snapCount;
+        int avgNet = sumNet / snapCount, avgBuf = sumBuf / snapCount, avgOther = sumOther / snapCount;
 
         // Y轴范围
         int yMax = Math.Max(maxV + 10, 50);
         int yMin = Math.Max(minV - 5, 0);
         if (yMax - yMin < 20) yMax = yMin + 20;
 
-        float padL = 0, padR = 0, padT = 4, padB = 4;
+        float padL = 0, padR = 0, padT = 18, padB = 4;
         float plotW = w - padL - padR;
         float plotH = h - padT - padB;
 
@@ -959,34 +976,71 @@ public class LatencyChartPanel : Panel
             }
         }
 
-        // 填充区域
-        var pts = new PointF[snapCount];
+        float Y(int v) => padT + plotH * (1f - (float)(v - yMin) / (yMax - yMin));
+        float X(int i) => padL + (float)i / (snapCount - 1) * plotW;
+
+        // 堆叠区域: 从下到上: other(蓝) → network(绿) → buffer(橙) → 总线
+        // 计算堆叠基线
+        var baseOther = new float[snapCount]; // other 底部 = 0
+        var topOther = new float[snapCount];  // other 顶部
+        var topNet = new float[snapCount];    // network 顶部
+        var topBuf = new float[snapCount];    // buffer 顶部
+
         for (int i = 0; i < snapCount; i++) {
-            float x = padL + (float)i / (snapCount - 1) * plotW;
-            float y = padT + plotH * (1f - (float)(snap[i] - yMin) / (yMax - yMin));
-            pts[i] = new PointF(x, y);
+            float yBottom = Y(0);
+            baseOther[i] = yBottom;
+            topOther[i] = Y(sOther[i]);
+            topNet[i] = Y(sOther[i] + sNet[i]);
+            topBuf[i] = Y(sOther[i] + sNet[i] + sBuf[i]);
         }
 
-        using var fillPath = new System.Drawing.Drawing2D.GraphicsPath();
-        fillPath.AddLines(pts);
-        fillPath.AddLine(pts[^1].X, padT + plotH, pts[0].X, padT + plotH);
-        fillPath.CloseFigure();
-        using var fillBrush = new System.Drawing.Drawing2D.LinearGradientBrush(
-            new RectangleF(padL, padT, plotW, plotH),
-            Color.FromArgb(40, 37, 99, 235), Color.FromArgb(5, 37, 99, 235),
-            System.Drawing.Drawing2D.LinearGradientMode.Vertical);
-        g.FillPath(fillBrush, fillPath);
+        // 绘制堆叠填充
+        DrawStackedArea(g, snapCount, X, topNet, topBuf, Color.FromArgb(100, 255, 160, 60));  // buffer 橙
+        DrawStackedArea(g, snapCount, X, topOther, topNet, Color.FromArgb(100, 60, 200, 120)); // network 绿
+        DrawStackedArea(g, snapCount, X, baseOther, topOther, Color.FromArgb(80, 80, 140, 255)); // other 蓝
 
-        // 曲线
-        using var linePen = new Pen(Color.FromArgb(100, 180, 255), 1.8f);
+        // 总线
+        var pts = new PointF[snapCount];
+        for (int i = 0; i < snapCount; i++) pts[i] = new PointF(X(i), Y(sTotal[i]));
+        using var linePen = new Pen(Color.FromArgb(180, 180, 220, 255), 1.5f);
         g.DrawLines(linePen, pts);
 
-        // 统计文字
-        using var statFont = new Font("Consolas", 8.5f, FontStyle.Bold);
-        using var statBrush = new SolidBrush(Color.FromArgb(200, 180, 220, 255));
-        string stats = $"avg {avgV}ms  |  min {minV}ms  |  max {maxV}ms  |  {snapCount} samples";
-        var statSize = g.MeasureString(stats, statFont);
-        g.DrawString(stats, statFont, statBrush, w - statSize.Width - 4, 2);
+        // 图例 + 统计文字
+        using var legFont = new Font("Consolas", 7.5f, FontStyle.Bold);
+        float lx = w - 4;
+        // 从右往左画
+        string sAvg = $"avg {avgV}ms";
+        var sAvgSize = g.MeasureString(sAvg, legFont);
+        lx -= sAvgSize.Width;
+        using var avgBrush = new SolidBrush(Color.FromArgb(200, 180, 220, 255));
+        g.DrawString(sAvg, legFont, avgBrush, lx, 2);
+
+        // 分项图例
+        lx -= 8;
+        DrawLegend(g, ref lx, $"网络 {avgNet}ms", Color.FromArgb(200, 60, 200, 120), legFont);
+        DrawLegend(g, ref lx, $"缓冲 {avgBuf}ms", Color.FromArgb(200, 255, 160, 60), legFont);
+        DrawLegend(g, ref lx, $"其他 {avgOther}ms", Color.FromArgb(200, 80, 140, 255), legFont);
+    }
+
+    private static void DrawStackedArea(Graphics g, int count, Func<int, float> X, float[] yTop, float[] yBottom, Color color)
+    {
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddLine(X(0), yTop[0], X(0), yTop[0]); // 起点
+        for (int i = 0; i < count; i++) path.AddLine(X(i), yTop[i], X(i), yTop[i]);
+        for (int i = count - 1; i >= 0; i--) path.AddLine(X(i), yBottom[i], X(i), yBottom[i]);
+        path.CloseFigure();
+        using var brush = new SolidBrush(color);
+        g.FillPath(brush, path);
+    }
+
+    private static void DrawLegend(Graphics g, ref float lx, string text, Color color, Font font)
+    {
+        var size = g.MeasureString(text, font);
+        lx -= size.Width + 14;
+        using var dotBrush = new SolidBrush(color);
+        g.FillRectangle(dotBrush, lx, 5, 8, 8);
+        using var textBrush = new SolidBrush(Color.FromArgb(200, 180, 200, 220));
+        g.DrawString(text, font, textBrush, lx + 10, 2);
     }
 
     protected override void Dispose(bool disposing)
