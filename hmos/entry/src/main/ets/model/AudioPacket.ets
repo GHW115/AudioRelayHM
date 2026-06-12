@@ -79,6 +79,8 @@ export class AudioPacket {
   timestamp: number = 0;
   /** 编码完成时间戳（毫秒） */
   encodeTimestamp: number = 0;
+  /** 发送完成时间戳（毫秒） */
+  sendTimestamp: number = 0;
   /** 音频采样率 */
   sampleRate?: number;
   /** 声道数 */
@@ -92,7 +94,7 @@ export class AudioPacket {
    * 序列化为 ArrayBuffer
    */
   serialize(): ArrayBuffer {
-    const headerSize = 36;
+    const headerSize = 44;
     const buffer = new ArrayBuffer(headerSize + this.payload.byteLength);
     const view = new DataView(buffer);
     let offset = 0;
@@ -114,6 +116,12 @@ export class AudioPacket {
     let etHigh: number = Math.floor(this.encodeTimestamp / 0x100000000);
     view.setUint32(offset, etLow, true); offset += 4;
     view.setInt32(offset, etHigh, true); offset += 4;
+
+    // sendTimestamp
+    let stLow: number = (this.sendTimestamp >>> 0);
+    let stHigh: number = Math.floor(this.sendTimestamp / 0x100000000);
+    view.setUint32(offset, stLow, true); offset += 4;
+    view.setInt32(offset, stHigh, true); offset += 4;
 
     view.setInt32(offset, this.sampleRate ?? 0, true); offset += 4;
     view.setUint8(offset, this.channels ?? 0); offset += 1;
@@ -156,6 +164,12 @@ export class AudioPacket {
     let etLow: number = view.getUint32(offset, true);
     let etHigh: number = view.getInt32(offset + 4, true);
     packet.encodeTimestamp = etHigh * 0x100000000 + etLow;
+    offset += 8;
+
+    // sendTimestamp
+    let stLow: number = view.getUint32(offset, true);
+    let stHigh: number = view.getInt32(offset + 4, true);
+    packet.sendTimestamp = stHigh * 0x100000000 + stLow;
     offset += 8;
 
     packet.sampleRate = view.getInt32(offset, true); offset += 4;

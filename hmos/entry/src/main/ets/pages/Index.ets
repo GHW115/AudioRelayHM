@@ -87,14 +87,15 @@ struct Index {
         // 计算延迟分项：网络 / PC处理 / 缓冲 / 渲染
         let now: number = Date.now();
         let totalMs: number = now - packet.timestamp - this.clockOffset;
-        let networkMs: number = packet.encodeTimestamp > 0
-          ? now - packet.encodeTimestamp - this.clockOffset
-          : totalMs;
         let pcProcessMs: number = packet.encodeTimestamp > 0
           ? packet.encodeTimestamp - packet.timestamp
           : 0;
+        let networkMs: number = packet.sendTimestamp > 0
+          ? now - packet.sendTimestamp - this.clockOffset
+          : (packet.encodeTimestamp > 0 ? now - packet.encodeTimestamp - this.clockOffset : totalMs);
         let bufferMs: number = this.bufferMsValues[this.bufferIndex];
-        let rendererMs: number = totalMs - networkMs - pcProcessMs - bufferMs;
+        let rendererMs: number = totalMs - pcProcessMs - networkMs - bufferMs;
+        if (rendererMs < 0) rendererMs = 0;
         if (totalMs >= 0 && totalMs < 10000 && now - this.lastLatencyReport > 200) {
           this.lastLatencyReport = now;
           let payload = new ArrayBuffer(16);

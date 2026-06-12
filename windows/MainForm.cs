@@ -356,7 +356,7 @@ public class NetworkServer {
                 OnConnected?.Invoke(true);
 
                 // TCP 粘包/拆包处理：环形缓冲 + 按长度解析完整包
-                const int HEADER_SIZE = 36;
+                const int HEADER_SIZE = 44;
                 var recvBuf = new byte[262144]; // 256KB 累积缓冲
                 int recvLen = 0; // 当前有效数据长度
                 var readBuf = new byte[65536]; // 64KB 读取缓冲
@@ -374,7 +374,7 @@ public class NetworkServer {
                     // 循环解析完整包
                     int offset = 0;
                     while (recvLen - offset >= HEADER_SIZE) {
-                        int payloadLen = BitConverter.ToInt32(recvBuf, offset + 32);
+                        int payloadLen = BitConverter.ToInt32(recvBuf, offset + 40);
                         int totalLen = HEADER_SIZE + payloadLen;
                         if (recvLen - offset < totalLen) break; // 数据不完整
 
@@ -433,10 +433,12 @@ public class NetworkServer {
     }
     public async Task SendAudioAsync(byte[] data, int sr, byte ch, EncodingType enc = EncodingType.Pcm, long? captureTime = null, long? encodeTime = null) {
         if (stream == null) return;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var p = new AudioPacket { MsgType = MessageType.AudioData, Direction = StreamDirection.PcToPhone,
             Encoding = enc, Sequence = seq++,
-            Timestamp = captureTime ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            EncodeTimestamp = encodeTime ?? 0,
+            Timestamp = captureTime ?? now,
+            EncodeTimestamp = encodeTime ?? now,
+            SendTimestamp = now,
             SampleRate = sr, Channels = ch, BitsPerSample = 16, Payload = data };
         await stream.WriteAsync(p.Serialize());
     }
@@ -810,7 +812,7 @@ public enum EncodingType : byte { Pcm = 0, Opus = 1, Adpcm = 2 }
 public class AudioPacket {
     public MessageType MsgType; public ControlCommand? Command; public StreamDirection? Direction;
     public EncodingType Encoding;
-    public int Sequence; public long Timestamp; public long EncodeTimestamp;
+    public int Sequence; public long Timestamp; public long EncodeTimestamp; public long SendTimestamp;
     public int SampleRate;
     public byte Channels, BitsPerSample; public byte[] Payload = [];
 
@@ -818,7 +820,7 @@ public class AudioPacket {
         using var ms = new MemoryStream(); using var bw = new BinaryWriter(ms);
         bw.Write((byte)MsgType); bw.Write((byte?)(byte?)Command ?? 0xFF);
         bw.Write((byte?)(byte?)Direction ?? 0xFF); bw.Write((byte)Encoding);
-        bw.Write(Sequence); bw.Write(Timestamp); bw.Write(EncodeTimestamp);
+        bw.Write(Sequence); bw.Write(Timestamp); bw.Write(EncodeTimestamp); bw.Write(SendTimestamp);
         bw.Write(SampleRate); bw.Write(Channels); bw.Write(BitsPerSample); bw.Write((ushort)0);
         bw.Write(Payload.Length); if (Payload.Length > 0) bw.Write(Payload);
         return ms.ToArray();
@@ -829,7 +831,7 @@ public class AudioPacket {
         var c = br.ReadByte(); if (c != 0xFF) p.Command = (ControlCommand)c;
         var dr = br.ReadByte(); if (dr != 0xFF) p.Direction = (StreamDirection)dr;
         p.Encoding = (EncodingType)br.ReadByte();
-        p.Sequence = br.ReadInt32(); p.Timestamp = br.ReadInt64(); p.EncodeTimestamp = br.ReadInt64();
+        p.Sequence = br.ReadInt32(); p.Timestamp = br.ReadInt64(); p.EncodeTimestamp = br.ReadInt64(); p.SendTimestamp = br.ReadInt64();
         p.SampleRate = br.ReadInt32(); p.Channels = br.ReadByte(); p.BitsPerSample = br.ReadByte(); br.ReadUInt16();
         int len = br.ReadInt32(); if (len > 0) p.Payload = br.ReadBytes(len);
         return p;

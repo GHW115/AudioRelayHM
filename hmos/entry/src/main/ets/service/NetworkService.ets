@@ -29,7 +29,7 @@ export class NetworkService {
   private _state: ConnectionState = ConnectionState.DISCONNECTED;
   private sequenceNumber: number = 0;
   private heartbeatTimer: number = -1;
-  private readonly HEADER_SIZE: number = 36;
+  private readonly HEADER_SIZE: number = 44;
   private recvBuf: ArrayBuffer = new ArrayBuffer(0);
   private recvView: Uint8Array = new Uint8Array(0);
 
@@ -201,8 +201,8 @@ export class NetworkService {
 
       // 循环解析完整包
       while (this.recvBuf.byteLength >= this.HEADER_SIZE) {
-        let payloadLen = this.recvView[32] | (this.recvView[33] << 8) |
-          (this.recvView[34] << 16) | (this.recvView[35] << 24);
+        let payloadLen = this.recvView[40] | (this.recvView[41] << 8) |
+          (this.recvView[42] << 16) | (this.recvView[43] << 24);
         let totalLen = this.HEADER_SIZE + payloadLen;
 
         if (this.recvBuf.byteLength < totalLen) {
