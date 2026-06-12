@@ -186,8 +186,33 @@ export class AudioPlay {
         return this.onWriteData(buffer);
       });
 
+      // 处理音频中断（其他 app 播放声音时）
+      this.audioRenderer.on('audioInterrupt', (interruptEvent: audio.AudioInterruptEvent) => {
+        if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN) {
+          console.info('[AudioPlay] 音频中断开始（其他 app 播放声音）');
+          // 不主动 stop，让系统自动处理，保持连接不断
+        } else if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
+          console.info('[AudioPlay] 音频中断结束，恢复播放');
+          // 尝试恢复播放
+          if (this.audioRenderer && this.isPlaying) {
+            this.audioRenderer.start().catch((err: Error) => {
+              console.error(`[AudioPlay] 恢复播放失败: ${err.message}`);
+            });
+          }
+        }
+      });
+
       await this.audioRenderer.start();
       this.isPlaying = true;
+
+      // 监听渲染器状态变化，被系统暂停时自动恢复
+      this.audioRenderer.on('stateChange', (state: audio.AudioState) => {
+        console.info(`[AudioPlay] 渲染器状态: ${state}`);
+        if (state === audio.AudioState.STATE_PAUSED && this.isPlaying) {
+          // 系统暂停了播放，尝试恢复
+          this.audioRenderer?.start().catch(() => {});
+        }
+      });
 
       this.createAVSession();
       this.startBackgroundTask();
