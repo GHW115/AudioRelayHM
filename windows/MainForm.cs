@@ -247,7 +247,7 @@ public class MainForm : Form
         var lblBuf = new Label { Text = "缓冲时间", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 100), AutoSize = true };
         cboBuffer = new ComboBox { Location = new Point(120, 97), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
-        cboBuffer.Items.AddRange(["50 ms", "100 ms", "200 ms", "500 ms", "1000 ms"]); cboBuffer.SelectedIndex = 1;
+        cboBuffer.Items.AddRange(["0 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1000 ms"]); cboBuffer.SelectedIndex = 2;
         // 输出设备选择
         var lblDev = new Label { Text = "输出设备", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 132), AutoSize = true };
@@ -771,7 +771,7 @@ public class AudioPlaybackService {
 
     public void Start() {
         var fmt = new WaveFormat(48000, 16, 2);
-        prov = new(fmt) { BufferDuration = TimeSpan.FromMilliseconds(BufferDurationMs), DiscardOnBufferOverflow = true };
+        prov = new(fmt) { BufferDuration = TimeSpan.FromMilliseconds(Math.Max(BufferDurationMs, 50)), DiscardOnBufferOverflow = true };
         int devNum = _deviceNumber;
         if (devNum < 0 || devNum >= WaveOut.DeviceCount) devNum = 0;
         wav = new() { DeviceNumber = devNum };

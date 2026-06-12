@@ -20,16 +20,16 @@ struct Index {
   @State private phoneToPCActive: boolean = false;
   @State private statusText: string = '就绪';
   @State private encodingIndex: number = 2;
-  @State private bufferIndex: number = 1;
+  @State private bufferIndex: number = 2;
   private encodingOptions: SelectOption[] = [
     { value: 'PCM' },
     { value: 'Opus 32k' }, { value: 'Opus 64k' },
     { value: 'Opus 128k' }, { value: 'Opus 192k' }
   ];
   private bufferOptions: SelectOption[] = [
-    { value: '50ms' }, { value: '100ms' }, { value: '200ms' }, { value: '500ms' }, { value: '1000ms' }
+    { value: '0ms' }, { value: '50ms' }, { value: '100ms' }, { value: '200ms' }, { value: '500ms' }, { value: '1000ms' }
   ];
-  private bufferMsValues: number[] = [50, 100, 200, 500, 1000];
+  private bufferMsValues: number[] = [0, 50, 100, 200, 500, 1000];
   @State private animScale: number = 1.0;
 
   private networkService: NetworkService = new NetworkService();
@@ -42,6 +42,7 @@ struct Index {
     let ctx = AppStorage.get<Context>('abilityContext');
     if (ctx) {
       this.audioPlay.setContext(ctx);
+      this.audioCapture.setContext(ctx);
     }
     this.setupCallbacks();
     // 脉冲动画

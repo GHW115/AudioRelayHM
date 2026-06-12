@@ -6,6 +6,9 @@
 // service/AudioCapture.ets
 
 import { audio } from '@kit.AudioKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { wantAgent, WantAgent } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 /**
  * 音频捕获回调类
@@ -22,6 +25,7 @@ export class AudioCapture {
   private audioCapturer: audio.AudioCapturer | null = null;
   private isCapturing: boolean = false;
   private callback: AudioCaptureCallback | null = null;
+  private context: Context | null = null;
 
   private _sampleRate: number = 48000;
   private _channels: number = 2;
@@ -45,6 +49,10 @@ export class AudioCapture {
 
   setCallback(callback: AudioCaptureCallback): void {
     this.callback = callback;
+  }
+
+  setContext(context: Context): void {
+    this.context = context;
   }
 
   async start(): Promise<void> {
@@ -76,6 +84,7 @@ export class AudioCapture {
 
       await this.audioCapturer.start();
       this.isCapturing = true;
+      this.startBackgroundTask();
       console.info('[AudioCapture] Started');
     } catch (err) {
       let errorMsg: string;
@@ -91,6 +100,7 @@ export class AudioCapture {
 
   async stop(): Promise<void> {
     this.isCapturing = false;
+    this.stopBackgroundTask();
     try {
       this.audioCapturer?.off('readData');
       await this.audioCapturer?.stop();
@@ -100,5 +110,44 @@ export class AudioCapture {
     }
     this.audioCapturer = null;
     console.info('[AudioCapture] Stopped');
+  }
+
+  private async startBackgroundTask(): Promise<void> {
+    if (!this.context) {
+      return;
+    }
+    try {
+      let wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [
+          {
+            bundleName: this.context.applicationInfo.name,
+            abilityName: 'EntryAbility',
+          }
+        ],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
+      };
+      let wantAgentObj: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
+      await backgroundTaskManager.startBackgroundRunning(
+        this.context,
+        backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
+        wantAgentObj
+      );
+      console.info('[AudioCapture] 后台录音任务已启动');
+    } catch (err) {
+      let error = err as BusinessError;
+      console.error(`[AudioCapture] 后台任务失败: code=${error.code}, message=${error.message}`);
+    }
+  }
+
+  private async stopBackgroundTask(): Promise<void> {
+    if (this.context) {
+      try {
+        await backgroundTaskManager.stopBackgroundRunning(this.context);
+      } catch (err) {
+        console.error(`[AudioCapture] 停止后台任务失败: ${err}`);
+      }
+    }
   }
 }
