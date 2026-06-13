@@ -105,8 +105,7 @@ public class MainForm : Form
                 lblStreamStatus.Text = "PC → 手机 串流中"; lblStreamStatus.ForeColor = Color.FromArgb(16, 185, 129);
                 lblConnectedDevice.Text = "鸿蒙设备已连接";
                 capture.Start();
-                playback.DeviceNumber = cboOutputDevice.SelectedIndex;
-                playback.Start();
+                // 手机→PC 音频不自动播放，需用户手动选择虚拟设备（如 VB-Cable）后开启
                 Log($"鸿蒙端已连接，自动开启 PC→手机 ({capture.CurrentEncoding} {capture.CurrentBitrate}kbps)");
             } else {
                 lblStatusDot.ForeColor = Color.FromArgb(245, 158, 11);
@@ -318,9 +317,21 @@ public class MainForm : Form
         int idx = cboOutputDevice.SelectedIndex;
         if (idx >= 0) {
             playback.DeviceNumber = idx;
-            if (playback.IsPlaying) {
-                Invoke(() => { playback.RestartWithNewBuffer(); });
-                Log($"输出设备已切换: {cboOutputDevice.SelectedItem}");
+            if (idx == 0) {
+                // 默认设备（扬声器）不播放手机音频
+                if (playback.IsPlaying) {
+                    playback.Stop();
+                    Log($"手机→PC 已停止（避免输出到扬声器）");
+                }
+            } else {
+                // 虚拟设备（如 VB-Cable）自动开始播放
+                if (!playback.IsPlaying && server.Connected) {
+                    playback.Start();
+                    Log($"手机→PC 已开始，输出到: {cboOutputDevice.SelectedItem}");
+                } else if (playback.IsPlaying) {
+                    Invoke(() => { playback.RestartWithNewBuffer(); });
+                    Log($"输出设备已切换: {cboOutputDevice.SelectedItem}");
+                }
             }
         }
     }
