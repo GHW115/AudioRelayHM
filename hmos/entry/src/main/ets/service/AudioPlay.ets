@@ -4,6 +4,8 @@
  */
 
 // service/AudioPlay.ets
+// 音频播放服务：通过 NAPI 原生管线（UDP接收 + Opus解码 + OHAudio渲染）播放PC音频
+// AVSession + 后台任务保留在 ArkTS 层
 
 import { audio } from '@kit.AudioKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
@@ -11,7 +13,7 @@ import { wantAgent, WantAgent } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { avSession } from '@kit.AVSessionKit';
 import { EncodingType } from '../model/AudioPacket';
-import { createDecoder, pushInput, readOutput, destroyDecoder } from 'libopus_decoder.so';
+import { nativeAudioInit, nativeAudioStart, nativeAudioStop, nativeAudioSetEncoding } from 'libopus_decoder.so';
 
 /**
  * 音频播放回调类
@@ -22,7 +24,7 @@ export class AudioPlayCallback {
 }
 
 /**
- * IMA ADPCM 解码器
+ * IMA ADPCM 解码器（保留用于未来可能的 ArkTS 层解码需求）
  */
 class AdpcmDecoder {
   private static readonly STEP_TABLE: number[] = [
@@ -39,13 +41,9 @@ class AdpcmDecoder {
     -1, -1, -1, -1, 2, 4, 6, 8
   ];
 
-  /**
-   * 解码 ADPCM 数据为 PCM 16-bit short[]，再转 ArrayBuffer
-   */
   static decode(adpcm: ArrayBuffer, channels: number): ArrayBuffer {
     let view = new DataView(adpcm);
     let offset = 0;
-
     let predictors: number[] = [];
     let indices: number[] = [];
     for (let ch = 0; ch < channels; ch++) {
@@ -56,25 +54,20 @@ class AdpcmDecoder {
       indices.push(view.getInt32(offset, true));
       offset += 4;
     }
-
     let dataLen = adpcm.byteLength - offset;
     let sampleCount = dataLen * 2;
     let outBuf = new ArrayBuffer(sampleCount * 2);
     let outView = new DataView(outBuf);
     let outIdx = 0;
-
     while (offset < adpcm.byteLength) {
       let b = view.getUint8(offset);
       offset++;
-
       for (let ch = 0; ch < channels; ch += 2) {
         let code0 = b & 0x0F;
         let code1 = (b >> 4) & 0x0F;
-
         let sample0 = AdpcmDecoder.decodeSample(code0, predictors, indices, ch);
         outView.setInt16(outIdx, sample0, true);
         outIdx += 2;
-
         if (ch + 1 < channels) {
           let sample1 = AdpcmDecoder.decodeSample(code1, predictors, indices, ch + 1);
           outView.setInt16(outIdx, sample1, true);
@@ -82,7 +75,6 @@ class AdpcmDecoder {
         }
       }
     }
-
     return outBuf;
   }
 
@@ -90,29 +82,24 @@ class AdpcmDecoder {
     let idx = Math.min(Math.max(indices[ch], 0), 88);
     let step = AdpcmDecoder.STEP_TABLE[idx];
     let delta = step >> 3;
-
     if ((code & 4) !== 0) delta += step;
     if ((code & 2) !== 0) delta += step >> 1;
     if ((code & 1) !== 0) delta += step >> 2;
-
     if ((code & 8) !== 0) {
       predictors[ch] -= delta;
     } else {
       predictors[ch] += delta;
     }
-
     predictors[ch] = Math.min(Math.max(predictors[ch], -32768), 32767);
     indices[ch] = Math.min(Math.max(indices[ch] + AdpcmDecoder.INDEX_TABLE[code & 7], 0), 88);
-
     return predictors[ch];
   }
 }
 
 /**
- * 音频播放服务（接收 PC 音频并播放）
+ * 音频播放服务（NAPI 原生管线控制 + AVSession + 后台任务）
  */
 export class AudioPlay {
-  private audioRenderer: audio.AudioRenderer | null = null;
   private isPlaying: boolean = false;
   private callback: AudioPlayCallback | null = null;
   private context: Context | null = null;
@@ -121,15 +108,7 @@ export class AudioPlay {
   private _sampleRate: number = 48000;
   private _channels: number = 2;
   private _bitsPerSample: number = 16;
-
-  // 缓冲区
-  private bufferQueue: ArrayBuffer[] = [];
-  private bufferSize: number = 0;
   private bufferTargetMs: number = 200;
-  private flushTaskId: number = -1;
-  private opusHandle: number = 0;
-  private opusInitDone: boolean = false;
-  private lastEncodingType: EncodingType = EncodingType.PCM;
 
   get sampleRate(): number {
     return this._sampleRate;
@@ -164,61 +143,30 @@ export class AudioPlay {
     if (this.isPlaying) {
       return;
     }
-  
+
     try {
-      // Task 3: AVSession 必须在 AudioRenderer 之前创建
+      // AVSession 必须在 NAPI 音频管线之前创建
       await this.createAVSession();
       this.startBackgroundTask();
-  
-      const rendererOptions: audio.AudioRendererOptions = {
-        streamInfo: {
-          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_48000,
-          channels: audio.AudioChannel.CHANNEL_2,
-          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
-          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW,
-        },
-        rendererInfo: {
-          usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
-          rendererFlags: 0,
-        },
-      };
-  
-      this.audioRenderer = await audio.createAudioRenderer(rendererOptions);
-  
-      // Task 2: 设置共享中断模式，允许其他音频共存
-      await this.audioRenderer.setInterruptMode(audio.InterruptMode.SHARE_MODE);
-  
-      // 注册系统数据回调（拉取模式）
-      this.audioRenderer.on('writeData', (buffer: ArrayBuffer): audio.AudioDataCallbackResult => {
-        return this.onWriteData(buffer);
-      });
-  
-      // 处理音频中断
-      this.audioRenderer.on('audioInterrupt', (interruptEvent: audio.InterruptEvent) => {
-        if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN) {
-          console.info('[AudioPlay] 音频中断开始');
-        } else if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
-          console.info('[AudioPlay] 音频中断结束，恢复播放');
-          if (this.audioRenderer && this.isPlaying) {
-            this.audioRenderer.start().catch((err: Error) => {
-              console.error(`[AudioPlay] 恢复播放失败: ${err.message}`);
-            });
-          }
-        }
-      });
-  
-      await this.audioRenderer.start();
+
+      // 初始化 NAPI 原生音频管线（UDP接收 + Opus解码 + OHAudio渲染）
+      const initResult: number = nativeAudioInit(this._sampleRate, this._channels);
+      if (initResult !== 0) {
+        throw new Error(`nativeAudioInit failed: ${initResult}`);
+      }
+
+      // 设置编码类型（0=PCM）
+      nativeAudioSetEncoding(0);
+
+      // 启动管线
+      const startResult: number = nativeAudioStart();
+      if (startResult !== 0) {
+        throw new Error(`nativeAudioStart failed: ${startResult}`);
+      }
+
       this.isPlaying = true;
-  
-      // 监听渲染器状态变化
-      this.audioRenderer.on('stateChange', (state: audio.AudioState) => {
-        console.info(`[AudioPlay] 渲染器状态: ${state}`);
-        if (state === audio.AudioState.STATE_PAUSED && this.isPlaying) {
-          this.audioRenderer?.start().catch(() => {});
-        }
-      });
-  
-      this.initOpusDecoder();
+      this.callback?.onInfo('NAPI 原生音频管线已启动');
+      console.info('[AudioPlay] Native audio pipeline started');
     } catch (err) {
       let errorMsg: string;
       if (err instanceof Error) {
@@ -230,8 +178,30 @@ export class AudioPlay {
       this.callback?.onError(`启动音频播放失败: ${errorMsg}`);
     }
   }
-  
-  // Task 1: 完整 AVSession 流程：metadata → events → activate → playbackState
+
+  /**
+   * 接收音频数据（兼容旧接口，NAPI 管线模式下数据直接由 C++ 层处理，此方法为空）
+   */
+  writeData(data: ArrayBuffer, encodingType: EncodingType = EncodingType.PCM): void {
+    // NAPI 管线模式下，UDP 数据直接由 C++ 层接收和处理
+    // 此方法保留仅为兼容旧调用方，实际不做任何操作
+  }
+
+  async stop(): Promise<void> {
+    this.isPlaying = false;
+    this.stopBackgroundTask();
+    this.destroyAVSession();
+
+    try {
+      nativeAudioStop();
+    } catch (err) {
+      console.error(`[AudioPlay] Native stop error: ${err}`);
+    }
+
+    console.info('[AudioPlay] Stopped');
+  }
+
+  // AVSession 完整流程：metadata → events → activate → playbackState
   private async createAVSession(): Promise<void> {
     if (!this.context) {
       return;
@@ -240,36 +210,33 @@ export class AudioPlay {
       this.avSessionObj = await avSession.createAVSession(
         this.context, 'AudioRelay', 'audio'
       );
-  
-      // 1. 设置媒体元数据（系统播控中心需要）
+
+      // 1. 设置媒体元数据
       const metadata: avSession.AVMetadata = {
         assetId: 'audio-relay-stream',
         title: 'PC 音频串流',
         artist: 'AudioRelay',
       };
       await this.avSessionObj.setAVMetadata(metadata);
-  
+
       // 2. 注册播控事件（必须在 activate 之前）
       this.avSessionObj.on('play', () => {
-        if (this.audioRenderer && this.isPlaying) {
-          this.audioRenderer.start().catch(() => {});
-        }
+        console.info('[AudioPlay] AVSession play 事件');
       });
       this.avSessionObj.on('pause', () => {
-        // 不主动暂停，保持串流持续
         console.info('[AudioPlay] AVSession pause 事件（忽略）');
       });
-  
-      // 3. 激活会话（在 metadata 和 events 之后）
+
+      // 3. 激活会话
       await this.avSessionObj.activate();
-  
+
       // 4. 设置播放状态
       const playbackState: avSession.AVPlaybackState = {
         state: avSession.PlaybackState.PLAYBACK_STATE_PLAY,
         speed: 1.0,
       };
       await this.avSessionObj.setAVPlaybackState(playbackState);
-  
+
       this.callback?.onInfo('AVSession 已激活');
       console.info('[AudioPlay] AVSession 完整初始化完成');
     } catch (err) {
@@ -277,93 +244,6 @@ export class AudioPlay {
       console.error('[AudioPlay] ' + msg);
       this.callback?.onInfo(msg);
     }
-  }
-
-  // 系统 writeData 回调：填充 buffer 并返回 VALID，系统自动播放
-  private onWriteData(buffer: ArrayBuffer): audio.AudioDataCallbackResult {
-    if (!this.isPlaying) {
-      return audio.AudioDataCallbackResult.INVALID;
-    }
-    // 从 Opus 解码器取 PCM
-    if (this.opusHandle !== 0) {
-      while (true) {
-        let pcm: ArrayBuffer | undefined = readOutput(this.opusHandle);
-        if (pcm) {
-          this.bufferQueue.push(pcm);
-          this.bufferSize += pcm.byteLength;
-        } else {
-          break;
-        }
-      }
-    }
-    // 填充系统提供的 buffer（必须填满，否则杂音）
-    let view: Uint8Array = new Uint8Array(buffer);
-    // 先清零整个 buffer，防止旧数据循环播放
-    view.fill(0);
-    let filled: number = 0;
-    while (filled < buffer.byteLength && this.bufferQueue.length > 0) {
-      let f: ArrayBuffer = this.bufferQueue.shift()!;
-      this.bufferSize -= f.byteLength;
-      let remaining: number = buffer.byteLength - filled;
-      if (f.byteLength <= remaining) {
-        view.set(new Uint8Array(f), filled);
-        filled += f.byteLength;
-      } else {
-        view.set(new Uint8Array(f, 0, remaining), filled);
-        let tail: ArrayBuffer = f.slice(remaining);
-        this.bufferQueue.unshift(tail);
-        this.bufferSize += tail.byteLength;
-        filled += remaining;
-      }
-    }
-    return audio.AudioDataCallbackResult.VALID;
-  }
-
-  async writeData(data: ArrayBuffer, encodingType: EncodingType = EncodingType.PCM): Promise<void> {
-    if (!this.isPlaying) {
-      return;
-    }
-    // 检测编码切换：清理旧缓冲，重置解码器
-    if (encodingType !== this.lastEncodingType) {
-      console.info(`[AudioPlay] 编码切换: ${this.lastEncodingType} -> ${encodingType}，清理缓冲`);
-      this.bufferQueue = [];
-      this.bufferSize = 0;
-      if (encodingType === EncodingType.OPUS || this.lastEncodingType === EncodingType.OPUS) {
-        this.resetOpusDecoder();
-      }
-      this.lastEncodingType = encodingType;
-    }
-    if (encodingType === EncodingType.ADPCM) {
-      let pcm: ArrayBuffer = AdpcmDecoder.decode(data, this._channels);
-      this.bufferQueue.push(pcm);
-      this.bufferSize += pcm.byteLength;
-    } else if (encodingType === EncodingType.OPUS && this.opusHandle !== 0) {
-      pushInput(this.opusHandle, data);
-    } else {
-      this.bufferQueue.push(data);
-      this.bufferSize += data.byteLength;
-    }
-  }
-
-  async stop(): Promise<void> {
-    this.isPlaying = false;
-    if (this.flushTaskId !== -1) {
-      clearTimeout(this.flushTaskId);
-      this.flushTaskId = -1;
-    }
-    this.bufferQueue = [];
-    this.bufferSize = 0;
-    this.stopBackgroundTask();
-    this.destroyAVSession();
-    this.destroyOpusDecoder();
-    try {
-      await this.audioRenderer?.stop();
-      await this.audioRenderer?.release();
-    } catch (err) {
-      console.error(`[AudioPlay] Stop error: ${err}`);
-    }
-    this.audioRenderer = null;
-    console.info('[AudioPlay] Stopped');
   }
 
   private async startBackgroundTask(): Promise<void> {
@@ -417,41 +297,6 @@ export class AudioPlay {
         console.error(`[AudioPlay] 销毁 AVSession 失败: ${err}`);
       }
       this.avSessionObj = null;
-    }
-  }
-
-  private resetOpusDecoder(): void {
-    if (this.opusHandle !== 0) {
-      try {
-        destroyDecoder(this.opusHandle);
-      } catch (err) {
-        console.error('[AudioPlay] Failed to destroy Opus decoder: ' + err);
-      }
-      this.opusHandle = 0;
-    }
-    this.initOpusDecoder();
-    console.info('[AudioPlay] Opus decoder reset');
-  }
-
-  private initOpusDecoder(): void {
-    if (this.opusHandle === 0) {
-      try {
-        this.opusHandle = createDecoder(this._sampleRate, this._channels);
-        console.info('[AudioPlay] Opus decoder created, handle=' + this.opusHandle);
-      } catch (err) {
-        console.error('[AudioPlay] Failed to create Opus decoder: ' + err);
-      }
-    }
-  }
-
-  private destroyOpusDecoder(): void {
-    if (this.opusHandle !== 0) {
-      try {
-        destroyDecoder(this.opusHandle);
-      } catch (err) {
-        console.error('[AudioPlay] Failed to destroy Opus decoder: ' + err);
-      }
-      this.opusHandle = 0;
     }
   }
 }

@@ -9,6 +9,7 @@ target_link_libraries(opus_decoder PUBLIC
     libnative_media_codecbase.so
     libnative_media_core.so
     libnative_media_acodec.so
+    libohaudio.so
     ace_napi.z
 )
 

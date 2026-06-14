@@ -81,33 +81,8 @@ struct Index {
       }
     };
 
-    this.networkService.onAudioData = (packet: AudioPacket) => {
-      if (packet.direction === StreamDirection.PC_TO_PHONE) {
-        this.audioPlay.writeData(packet.payload, packet.encodingType);
-        // 计算延迟分项：网络 / PC处理 / 缓冲 / 渲染
-        let now: number = Date.now();
-        let totalMs: number = now - packet.timestamp - this.clockOffset;
-        let pcProcessMs: number = packet.encodeTimestamp > 0
-          ? packet.encodeTimestamp - packet.timestamp
-          : 0;
-        let networkMs: number = packet.sendTimestamp > 0
-          ? now - packet.sendTimestamp - this.clockOffset
-          : (packet.encodeTimestamp > 0 ? now - packet.encodeTimestamp - this.clockOffset : totalMs);
-        let bufferMs: number = this.bufferMsValues[this.bufferIndex];
-        let rendererMs: number = totalMs - pcProcessMs - networkMs - bufferMs;
-        if (rendererMs < 0) rendererMs = 0;
-        if (totalMs >= 0 && totalMs < 10000 && now - this.lastLatencyReport > 200) {
-          this.lastLatencyReport = now;
-          let payload = new ArrayBuffer(16);
-          let view = new DataView(payload);
-          view.setInt32(0, networkMs, true);
-          view.setInt32(4, pcProcessMs, true);
-          view.setInt32(8, bufferMs, true);
-          view.setInt32(12, rendererMs, true);
-          this.networkService.sendControl(ControlCommand.LATENCY_REPORT, payload);
-        }
-      }
-    };
+    // PC→手机音频现在由 NAPI 原生层直接处理（UDP接收 + OHAudio渲染），不经过 ArkTS 层
+    // 延迟报告暂禁用，待 NAPI 层添加统计接口后恢复
 
     this.networkService.onControlMessage = (packet: AudioPacket) => {
       if (packet.command === ControlCommand.TIME_SYNC && packet.payload.byteLength >= 16) {

@@ -4,23 +4,17 @@
  */
 
 // service/NetworkService.ets
+// TCP 控制通道 + 音频数据发送（手机→PC 方向）
+// PC→手机 方向的 UDP 音频接收由 NAPI C++ 层处理
 
 import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { worker } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
 
-interface WorkerMessage {
-  data: Record<string, Object>;
-}
-
-interface WorkerError {
-  message: string;
-}
-
 /**
- * 网络连接状�? */
+ * 网络连接状态
+ */
 export enum ConnectionState {
   DISCONNECTED = 0,
   CONNECTING = 1,
@@ -28,12 +22,11 @@ export enum ConnectionState {
 }
 
 /**
- * 网络服务：负责与 Windows 端的 TCP/UDP 通信
+ * 网络服务：TCP 控制通道 + 手机→PC 音频发送
  */
 export class NetworkService {
   private tcpSocket: socket.TCPSocket | null = null;
-  private udpSocket: socket.UDPSocket | null = null;
-  private audioWorker: worker.ThreadWorker | null = null;
+  private udpSendSocket: socket.UDPSocket | null = null;
   private host: string = '';
   private controlPort: number = 9287;
   private readonly udpPort: number = 9288;
@@ -61,7 +54,6 @@ export class NetworkService {
       return;
     }
 
-    // 取消可能存在的自动重连
     if (this.autoReconnectTimer !== -1) {
       clearTimeout(this.autoReconnectTimer);
       this.autoReconnectTimer = -1;
@@ -103,10 +95,9 @@ export class NetworkService {
 
       await this.sendHandshake();
       this.startHeartbeat();
-      await this.setupUdpSocket();
-      this.startAudioWorker();
+      await this.createUdpSendSocket();
 
-      console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + UDP ${this.udpPort} audio)`);
+      console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + NAPI UDP audio)`);
     } catch (err) {
       this._state = ConnectionState.DISCONNECTED;
       this.onStateChange?.(this._state);
@@ -128,8 +119,7 @@ export class NetworkService {
       clearTimeout(this.autoReconnectTimer);
       this.autoReconnectTimer = -1;
     }
-    this.closeUdpSocket();
-    this.stopAudioWorker();
+    this.closeUdpSendSocket();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
 
@@ -145,10 +135,12 @@ export class NetworkService {
     console.info('[NetworkService] Disconnected');
   }
 
+  /**
+   * 发送音频数据到 PC（手机→PC 方向，通过 UDP）
+   */
   async sendAudioData(direction: StreamDirection, pcmData: ArrayBuffer,
     sampleRate: number, channels: number, encodingType?: number): Promise<void> {
-    if (!this.udpSocket || this._state !== ConnectionState.CONNECTED) {
-      console.warn('[NetworkService] Cannot send audio: UDP not ready');
+    if (!this.udpSendSocket || this._state !== ConnectionState.CONNECTED) {
       return;
     }
 
@@ -161,7 +153,6 @@ export class NetworkService {
     packet.channels = channels;
     packet.bitsPerSample = 16;
     packet.payload = pcmData;
-    // 手机端始终发送 PCM（无 Opus 编码器），编码选择仅控制 Windows 端捕获
     packet.encodingType = EncodingType.PCM;
 
     try {
@@ -173,7 +164,7 @@ export class NetworkService {
           port: this.udpPort,
         },
       };
-      await this.udpSocket.send(sendOpts);
+      await this.udpSendSocket.send(sendOpts);
     } catch (err) {
       console.error(`[NetworkService] UDP audio send failed: ${err}`);
     }
@@ -182,9 +173,9 @@ export class NetworkService {
   async sendConfig(encoding: number, bitrate: number, bufferMs: number): Promise<void> {
     const payload = new ArrayBuffer(9);
     const view = new DataView(payload);
-    view.setUint8(0, encoding);           // 编码类型: 0=PCM, 1=Opus, 2=ADPCM
-    view.setInt32(1, bitrate, true);       // 码率 kbps
-    view.setInt32(5, bufferMs, true);      // 缓冲 ms
+    view.setUint8(0, encoding);
+    view.setInt32(1, bitrate, true);
+    view.setInt32(5, bufferMs, true);
     await this.sendControl(ControlCommand.CONFIG, payload);
   }
 
@@ -192,7 +183,6 @@ export class NetworkService {
     const payload = new ArrayBuffer(8);
     const view = new DataView(payload);
     let now: number = Date.now();
-    // 以 Int64 LE 格式写入时间戳
     view.setUint32(0, now >>> 0, true);
     view.setInt32(4, Math.floor(now / 0x100000000), true);
     await this.sendControl(ControlCommand.TIME_SYNC, payload);
@@ -207,7 +197,6 @@ export class NetworkService {
     if (payload) {
       packet.payload = payload;
     }
-
     await this.sendPacket(packet);
   }
 
@@ -216,7 +205,6 @@ export class NetworkService {
       console.warn('[NetworkService] Cannot send: not connected');
       return;
     }
-
     try {
       const data = packet.serialize();
       const sendOpts: socket.TCPSendOptions = { data: data };
@@ -236,14 +224,12 @@ export class NetworkService {
         newBytes = data.slice(0);
       }
 
-      // 合并到接收缓冲区
       let merged = new Uint8Array(this.recvBuf.byteLength + newBytes.byteLength);
       merged.set(this.recvView, 0);
       merged.set(new Uint8Array(newBytes), this.recvBuf.byteLength);
       this.recvBuf = merged.buffer.slice(0);
       this.recvView = new Uint8Array(this.recvBuf);
 
-      // 循环解析完整包
       while (this.recvBuf.byteLength >= this.HEADER_SIZE) {
         let payloadLen = this.recvView[40] | (this.recvView[41] << 8) |
           (this.recvView[42] << 16) | (this.recvView[43] << 24);
@@ -281,7 +267,7 @@ export class NetworkService {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       void this.sendControl(ControlCommand.HEARTBEAT);
-    }, 1000); // 1秒心跳，防止系统限制网络时TCP超时
+    }, 1000);
   }
 
   private stopHeartbeat(): void {
@@ -296,13 +282,11 @@ export class NetworkService {
       return;
     }
     this.stopHeartbeat();
-    this.closeUdpSocket();
-    this.stopAudioWorker();
+    this.closeUdpSendSocket();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
     console.info('[NetworkService] Connection closed');
 
-    // 自动重连：2秒后尝试重新连接
     if (this.host) {
       this.autoReconnectTimer = setTimeout(() => {
         console.info('[NetworkService] 尝试自动重连...');
@@ -314,126 +298,24 @@ export class NetworkService {
   }
 
   /**
-   * 创建并绑定 UDP socket，用于双向音频传输
+   * 创建 UDP 发送 socket（手机→PC 方向，不绑定本地端口）
    */
-  private async setupUdpSocket(): Promise<void> {
+  private async createUdpSendSocket(): Promise<void> {
     try {
-      this.udpSocket = socket.constructUDPSocketInstance();
-
-      // 绑定本地 UDP 端口 9288 以接收 PC 端音频
-      const bindAddr: socket.NetAddress = {
-        address: '0.0.0.0',
-        port: this.udpPort,
-      };
-      await this.udpSocket.bind(bindAddr);
-
-      // 监听 UDP 消息（PC 端发送的音频数据）
-      this.udpSocket.on('message', (info: socket.SocketMessageInfo) => {
-        this.handleUdpData(info.message);
-      });
-
-      this.udpSocket.on('error', (err: BusinessError) => {
-        console.error(`[NetworkService] UDP error: ${err.message}`);
-        // UDP 错误不触发断连，尝试重建
-        this.setupUdpSocket().catch(() => {});
-      });
-
-      this.udpSocket.on('close', () => {
-        console.info('[NetworkService] UDP socket closed');
-        // 如果仍在连接状态，尝试重建 UDP
-        if (this._state === ConnectionState.CONNECTED) {
-          this.setupUdpSocket().catch(() => {});
-        }
-      });
-
-      console.info(`[NetworkService] UDP socket bound to port ${this.udpPort}`);
+      this.udpSendSocket = socket.constructUDPSocketInstance();
+      console.info('[NetworkService] UDP send socket created');
     } catch (err) {
-      console.error(`[NetworkService] UDP setup failed: ${err}`);
-      this.udpSocket = null;
+      console.error(`[NetworkService] UDP send socket failed: ${err}`);
+      this.udpSendSocket = null;
     }
   }
 
-  /**
-   * 处理 UDP 接收到的音频数据（无需 TCP 粘包处理）
-   */
-  private handleUdpData(data: ArrayBuffer | string): void {
+  private closeUdpSendSocket(): void {
     try {
-      let buf: ArrayBuffer;
-      if (typeof data === 'string') {
-        buf = new util.TextEncoder().encodeInto(data).buffer.slice(0);
-      } else {
-        buf = data.slice(0);
-      }
-
-      const packet = AudioPacket.deserialize(buf);
-      if (packet.msgType === MessageType.AUDIO_DATA) {
-        this.onAudioData?.(packet);
-      }
+      this.udpSendSocket?.close();
     } catch (err) {
-      console.error(`[NetworkService] UDP parse failed: ${err}`);
+      console.error(`[NetworkService] UDP send close error: ${err}`);
     }
-  }
-
-  /**
-   * 关闭 UDP socket
-   */
-  private closeUdpSocket(): void {
-    try {
-      this.udpSocket?.off('message');
-      this.udpSocket?.close();
-    } catch (err) {
-      console.error(`[NetworkService] UDP close error: ${err}`);
-    }
-    this.udpSocket = null;
-  }
-
-  /**
-   * 启动 AudioWorker 线程处理 UDP 音频接收（不受熄屏降频影响）
-   */
-  private startAudioWorker(): void {
-    try {
-      this.audioWorker = new worker.ThreadWorker('entry/ets/workers/AudioWorker.ets');
-      this.audioWorker.onmessage = (e: WorkerMessage) => {
-        const msg: Record<string, Object> = e.data;
-        const msgType: string = msg['type'] as string;
-        if (msgType === 'audioPacket') {
-          try {
-            const packet = AudioPacket.deserialize(msg['data'] as ArrayBuffer);
-            if (packet.msgType === MessageType.AUDIO_DATA) {
-              this.onAudioData?.(packet);
-            }
-          } catch (err) {
-            console.error(`[NetworkService] Worker packet parse failed: ${err}`);
-          }
-        } else if (msgType === 'status') {
-          console.info(`[AudioWorker] ${msg['message'] as string}`);
-        } else if (msgType === 'error') {
-          console.error(`[AudioWorker] ${msg['message'] as string}`);
-        }
-      };
-      this.audioWorker.onerror = (err: WorkerError) => {
-        console.error(`[AudioWorker] Worker error: ${err.message}`);
-      };
-      this.audioWorker.postMessage({ type: 'start' });
-      console.info('[NetworkService] AudioWorker started');
-    } catch (err) {
-      console.error(`[NetworkService] AudioWorker create failed: ${err}`);
-      this.audioWorker = null;
-    }
-  }
-
-  /**
-   * 停止 AudioWorker
-   */
-  private stopAudioWorker(): void {
-    if (this.audioWorker) {
-      try {
-        this.audioWorker.postMessage({ type: 'stop' });
-        this.audioWorker.terminate();
-      } catch (err) {
-        console.error(`[NetworkService] AudioWorker stop error: ${err}`);
-      }
-      this.audioWorker = null;
-    }
+    this.udpSendSocket = null;
   }
 }
