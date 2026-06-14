@@ -164,8 +164,12 @@ export class AudioPlay {
     if (this.isPlaying) {
       return;
     }
-
+  
     try {
+      // Task 3: AVSession 必须在 AudioRenderer 之前创建
+      await this.createAVSession();
+      this.startBackgroundTask();
+  
       const rendererOptions: audio.AudioRendererOptions = {
         streamInfo: {
           samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_48000,
@@ -178,22 +182,23 @@ export class AudioPlay {
           rendererFlags: 0,
         },
       };
-
+  
       this.audioRenderer = await audio.createAudioRenderer(rendererOptions);
-
-      // 注册系统数据回调（拉取模式）：系统主动要求数据，完美匹配实时速率
+  
+      // Task 2: 设置共享中断模式，允许其他音频共存，熄屏不被限制
+      this.audioRenderer.audioInterruptMode = audio.InterruptMode.SHARE_MODE;
+  
+      // 注册系统数据回调（拉取模式）
       this.audioRenderer.on('writeData', (buffer: ArrayBuffer): audio.AudioDataCallbackResult => {
         return this.onWriteData(buffer);
       });
-
-      // 处理音频中断（其他 app 播放声音时）
+  
+      // 处理音频中断
       this.audioRenderer.on('audioInterrupt', (interruptEvent: audio.InterruptEvent) => {
         if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN) {
-          console.info('[AudioPlay] 音频中断开始（其他 app 播放声音）');
-          // 不主动 stop，让系统自动处理，保持连接不断
+          console.info('[AudioPlay] 音频中断开始');
         } else if (interruptEvent.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
           console.info('[AudioPlay] 音频中断结束，恢复播放');
-          // 尝试恢复播放
           if (this.audioRenderer && this.isPlaying) {
             this.audioRenderer.start().catch((err: Error) => {
               console.error(`[AudioPlay] 恢复播放失败: ${err.message}`);
@@ -201,21 +206,18 @@ export class AudioPlay {
           }
         }
       });
-
+  
       await this.audioRenderer.start();
       this.isPlaying = true;
-
-      // 监听渲染器状态变化，被系统暂停时自动恢复
+  
+      // 监听渲染器状态变化
       this.audioRenderer.on('stateChange', (state: audio.AudioState) => {
         console.info(`[AudioPlay] 渲染器状态: ${state}`);
         if (state === audio.AudioState.STATE_PAUSED && this.isPlaying) {
-          // 系统暂停了播放，尝试恢复
           this.audioRenderer?.start().catch(() => {});
         }
       });
-
-      this.createAVSession();
-      this.startBackgroundTask();
+  
       this.initOpusDecoder();
     } catch (err) {
       let errorMsg: string;
@@ -228,7 +230,8 @@ export class AudioPlay {
       this.callback?.onError(`启动音频播放失败: ${errorMsg}`);
     }
   }
-
+  
+  // Task 1: 完整 AVSession 流程：metadata → events → activate → playbackState
   private async createAVSession(): Promise<void> {
     if (!this.context) {
       return;
@@ -237,15 +240,38 @@ export class AudioPlay {
       this.avSessionObj = await avSession.createAVSession(
         this.context, 'AudioRelay', 'audio'
       );
+  
+      // 1. 设置媒体元数据（系统播控中心需要）
+      const metadata: avSession.AVMetadata = {
+        assetId: 'audio-relay-stream',
+        title: 'PC 音频串流',
+        artist: 'AudioRelay',
+      };
+      await this.avSessionObj.setAVMetadata(metadata);
+  
+      // 2. 注册播控事件（必须在 activate 之前）
+      this.avSessionObj.on('play', () => {
+        if (this.audioRenderer && this.isPlaying) {
+          this.audioRenderer.start().catch(() => {});
+        }
+      });
+      this.avSessionObj.on('pause', () => {
+        // 不主动暂停，保持串流持续
+        console.info('[AudioPlay] AVSession pause 事件（忽略）');
+      });
+  
+      // 3. 激活会话（在 metadata 和 events 之后）
       await this.avSessionObj.activate();
-      // 设置播放状态为“播放中”，告诉系统我们正在播放音频，防止熄屏被限制
+  
+      // 4. 设置播放状态
       const playbackState: avSession.AVPlaybackState = {
         state: avSession.PlaybackState.PLAYBACK_STATE_PLAY,
         speed: 1.0,
       };
       await this.avSessionObj.setAVPlaybackState(playbackState);
+  
       this.callback?.onInfo('AVSession 已激活');
-      console.info('[AudioPlay] AVSession created and playback state set');
+      console.info('[AudioPlay] AVSession 完整初始化完成');
     } catch (err) {
       let msg = `创建 AVSession 失败: ${(err as BusinessError).code}`;
       console.error('[AudioPlay] ' + msg);
