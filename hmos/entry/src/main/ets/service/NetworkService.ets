@@ -11,6 +11,14 @@ import { worker } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
 
+interface WorkerMessage {
+  data: Record<string, Object>;
+}
+
+interface WorkerError {
+  message: string;
+}
+
 /**
  * 网络连接状�? */
 export enum ConnectionState {
@@ -385,7 +393,7 @@ export class NetworkService {
   private startAudioWorker(): void {
     try {
       this.audioWorker = new worker.ThreadWorker('entry/ets/workers/AudioWorker.ets');
-      this.audioWorker.onmessage = (e: { data: Record<string, Object> }) => {
+      this.audioWorker.onmessage = (e: WorkerMessage) => {
         const msg: Record<string, Object> = e.data;
         const msgType: string = msg['type'] as string;
         if (msgType === 'audioPacket') {
@@ -403,7 +411,7 @@ export class NetworkService {
           console.error(`[AudioWorker] ${msg['message'] as string}`);
         }
       };
-      this.audioWorker.onerror = (err: { message: string }) => {
+      this.audioWorker.onerror = (err: WorkerError) => {
         console.error(`[AudioWorker] Worker error: ${err.message}`);
       };
       this.audioWorker.postMessage({ type: 'start' });

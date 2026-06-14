@@ -6,13 +6,16 @@
 import { worker } from '@kit.ArkTS';
 import { socket } from '@kit.NetworkKit';
 
+interface WorkerMessage {
+  data: Record<string, Object>;
+}
+
 const UDP_PORT: number = 9288;
 
 let udpSocket: socket.UDPSocket | null = null;
-const workerPort: worker.ThreadWorkerGlobalScope = worker.workerPort;
 
-// 接收主线程消息
-workerPort.onmessage = (e: { data: Record<string, Object> }) => {
+// 接收主线程消息（不显式标注 workerPort 类型，由编译器推断）
+worker.workerPort.onmessage = (e: WorkerMessage) => {
   const msg: Record<string, Object> = e.data;
   const msgType: string = msg['type'] as string;
   if (msgType === 'start') {
@@ -28,7 +31,7 @@ function startUdp(): void {
     udpSocket.bind({ address: '0.0.0.0', port: UDP_PORT }).then(() => {
       udpSocket!.on('message', (info: socket.SocketMessageInfo) => {
         const rawPacket: ArrayBuffer = info.message.slice(0);
-        workerPort.postMessage({
+        worker.workerPort.postMessage({
           type: 'audioPacket',
           data: rawPacket
         }, [rawPacket]);
@@ -47,12 +50,12 @@ function startUdp(): void {
         }, 1000);
       });
 
-      workerPort.postMessage({ type: 'status', message: `UDP bound to port ${UDP_PORT}` });
+      worker.workerPort.postMessage({ type: 'status', message: `UDP bound to port ${UDP_PORT}` });
     }).catch(() => {
-      workerPort.postMessage({ type: 'error', message: 'UDP bind failed' });
+      worker.workerPort.postMessage({ type: 'error', message: 'UDP bind failed' });
     });
   } catch (err) {
-    workerPort.postMessage({ type: 'error', message: `UDP create failed: ${err}` });
+    worker.workerPort.postMessage({ type: 'error', message: `UDP create failed: ${err}` });
   }
 }
 
