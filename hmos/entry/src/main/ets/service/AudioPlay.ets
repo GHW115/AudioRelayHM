@@ -238,8 +238,14 @@ export class AudioPlay {
         this.context, 'AudioRelay', 'audio'
       );
       await this.avSessionObj.activate();
+      // 设置播放状态为“播放中”，告诉系统我们正在播放音频，防止熄屏被限制
+      const playbackState: avSession.AVPlaybackState = {
+        state: avSession.PlaybackState.PLAYBACK_STATE_PLAY,
+        speed: 1.0,
+      };
+      await this.avSessionObj.setAVPlaybackState(playbackState);
       this.callback?.onInfo('AVSession 已激活');
-      console.info('[AudioPlay] AVSession created');
+      console.info('[AudioPlay] AVSession created and playback state set');
     } catch (err) {
       let msg = `创建 AVSession 失败: ${(err as BusinessError).code}`;
       console.error('[AudioPlay] ' + msg);
