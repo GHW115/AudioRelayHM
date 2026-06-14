@@ -9,11 +9,11 @@ import { socket } from '@kit.NetworkKit';
 const UDP_PORT: number = 9288;
 
 let udpSocket: socket.UDPSocket | null = null;
-const workerPort: worker.ThreadWorker = worker.workerPort;
+const workerPort: worker.ThreadWorkerGlobalScope = worker.workerPort;
 
 // 接收主线程消息
-workerPort.onmessage = (e: MessageEvent) => {
-  const msg: Record<string, Object> = e.data as Record<string, Object>;
+workerPort.onmessage = (e: { data: Record<string, Object> }) => {
+  const msg: Record<string, Object> = e.data;
   const msgType: string = msg['type'] as string;
   if (msgType === 'start') {
     startUdp();
@@ -27,7 +27,6 @@ function startUdp(): void {
     udpSocket = socket.constructUDPSocketInstance();
     udpSocket.bind({ address: '0.0.0.0', port: UDP_PORT }).then(() => {
       udpSocket!.on('message', (info: socket.SocketMessageInfo) => {
-        // 直接将原始 ArrayBuffer 转移到主线程（零拷贝）
         const rawPacket: ArrayBuffer = info.message.slice(0);
         workerPort.postMessage({
           type: 'audioPacket',
@@ -37,11 +36,15 @@ function startUdp(): void {
 
       udpSocket!.on('error', () => {
         stopUdp();
-        setTimeout(() => startUdp(), 1000);
+        setTimeout(() => {
+          try { startUdp(); } catch (e) { /* ignore */ }
+        }, 1000);
       });
 
       udpSocket!.on('close', () => {
-        setTimeout(() => startUdp(), 1000);
+        setTimeout(() => {
+          try { startUdp(); } catch (e) { /* ignore */ }
+        }, 1000);
       });
 
       workerPort.postMessage({ type: 'status', message: `UDP bound to port ${UDP_PORT}` });

@@ -385,8 +385,8 @@ export class NetworkService {
   private startAudioWorker(): void {
     try {
       this.audioWorker = new worker.ThreadWorker('entry/ets/workers/AudioWorker.ets');
-      this.audioWorker.onmessage = (e: MessageEvent) => {
-        const msg: Record<string, Object> = e.data as Record<string, Object>;
+      this.audioWorker.onmessage = (e: { data: Record<string, Object> }) => {
+        const msg: Record<string, Object> = e.data;
         const msgType: string = msg['type'] as string;
         if (msgType === 'audioPacket') {
           try {
@@ -403,7 +403,7 @@ export class NetworkService {
           console.error(`[AudioWorker] ${msg['message'] as string}`);
         }
       };
-      this.audioWorker.onerror = (err: ErrorEvent) => {
+      this.audioWorker.onerror = (err: { message: string }) => {
         console.error(`[AudioWorker] Worker error: ${err.message}`);
       };
       this.audioWorker.postMessage({ type: 'start' });
