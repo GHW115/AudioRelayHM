@@ -174,7 +174,7 @@ export class AudioPlay {
           encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW,
         },
         rendererInfo: {
-          usage: audio.StreamUsage.STREAM_USAGE_ACCESSIBILITY,
+          usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
           rendererFlags: 0,
         },
       };
