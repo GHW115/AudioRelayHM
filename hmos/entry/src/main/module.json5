@@ -33,9 +33,6 @@
           ],
           "when": "always"
         }
-      },
-      {
-        "name": "ohos.permission.MEDIA_PLAYBACK"
       }
     ],
     "abilities": [
