@@ -7,6 +7,7 @@
 
 import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
+import { worker } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -24,6 +25,7 @@ export enum ConnectionState {
 export class NetworkService {
   private tcpSocket: socket.TCPSocket | null = null;
   private udpSocket: socket.UDPSocket | null = null;
+  private audioWorker: worker.ThreadWorker | null = null;
   private host: string = '';
   private controlPort: number = 9287;
   private readonly udpPort: number = 9288;
@@ -94,6 +96,7 @@ export class NetworkService {
       await this.sendHandshake();
       this.startHeartbeat();
       await this.setupUdpSocket();
+      this.startAudioWorker();
 
       console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + UDP ${this.udpPort} audio)`);
     } catch (err) {
@@ -118,6 +121,7 @@ export class NetworkService {
       this.autoReconnectTimer = -1;
     }
     this.closeUdpSocket();
+    this.stopAudioWorker();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
 
@@ -285,6 +289,7 @@ export class NetworkService {
     }
     this.stopHeartbeat();
     this.closeUdpSocket();
+    this.stopAudioWorker();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
     console.info('[NetworkService] Connection closed');
@@ -372,5 +377,56 @@ export class NetworkService {
       console.error(`[NetworkService] UDP close error: ${err}`);
     }
     this.udpSocket = null;
+  }
+
+  /**
+   * 启动 AudioWorker 线程处理 UDP 音频接收（不受熄屏降频影响）
+   */
+  private startAudioWorker(): void {
+    try {
+      this.audioWorker = new worker.ThreadWorker('entry/ets/workers/AudioWorker.ets');
+      this.audioWorker.onmessage = (e: worker.MessageEvents) => {
+        const msg = e.data;
+        if (msg.type === 'audioPacket') {
+          // Worker 线程转发的原始音频包，在主线程反序列化
+          try {
+            const packet = AudioPacket.deserialize(msg.data as ArrayBuffer);
+            if (packet.msgType === MessageType.AUDIO_DATA) {
+              this.onAudioData?.(packet);
+            }
+          } catch (err) {
+            console.error(`[NetworkService] Worker packet parse failed: ${err}`);
+          }
+        } else if (msg.type === 'status') {
+          console.info(`[AudioWorker] ${msg.message}`);
+        } else if (msg.type === 'error') {
+          console.error(`[AudioWorker] ${msg.message}`);
+        }
+      };
+      this.audioWorker.onerror = (err: worker.ErrorEvent) => {
+        console.error(`[AudioWorker] Worker error: ${err.message}`);
+      };
+      // 通知 Worker 启动 UDP 接收
+      this.audioWorker.postMessage({ type: 'start' });
+      console.info('[NetworkService] AudioWorker started');
+    } catch (err) {
+      console.error(`[NetworkService] AudioWorker create failed: ${err}`);
+      this.audioWorker = null;
+    }
+  }
+
+  /**
+   * 停止 AudioWorker
+   */
+  private stopAudioWorker(): void {
+    if (this.audioWorker) {
+      try {
+        this.audioWorker.postMessage({ type: 'stop' });
+        this.audioWorker.terminate();
+      } catch (err) {
+        console.error(`[NetworkService] AudioWorker stop error: ${err}`);
+      }
+      this.audioWorker = null;
+    }
   }
 }

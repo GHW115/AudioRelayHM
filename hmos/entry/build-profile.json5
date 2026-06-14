@@ -13,6 +13,18 @@
       "copyCodeResource": {
         "enable": false
       }
+    },
+    "arkOptions": {
+      "runtimeOnly": {
+        "packages": [],
+        "sources": []
+      }
+    },
+    "workerOptions": {
+      "enable": true,
+      "workers": [
+        "src/main/ets/workers/AudioWorker.ets"
+      ]
     }
   },
   "buildOptionSet": [
