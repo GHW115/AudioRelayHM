@@ -185,8 +185,8 @@ export class AudioPlay {
   
       this.audioRenderer = await audio.createAudioRenderer(rendererOptions);
   
-      // Task 2: 设置共享中断模式，允许其他音频共存，熄屏不被限制
-      this.audioRenderer.audioInterruptMode = audio.InterruptMode.SHARE_MODE;
+      // Task 2: 设置共享中断模式，允许其他音频共存
+      await this.audioRenderer.setInterruptMode(audio.InterruptMode.SHARE_MODE);
   
       // 注册系统数据回调（拉取模式）
       this.audioRenderer.on('writeData', (buffer: ArrayBuffer): audio.AudioDataCallbackResult => {
