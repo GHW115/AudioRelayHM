@@ -3,22 +3,21 @@
  * Worker 线程不受熄屏降频影响，确保音频数据持续接收
  */
 
-import { worker, MessageEvents } from '@kit.ArkTS';
+import { worker } from '@kit.ArkTS';
 import { socket } from '@kit.NetworkKit';
 
 const UDP_PORT: number = 9288;
-// 简化版包头解析（与 AudioPacket.deserialize 保持一致，HEADER_SIZE=44）
-const HEADER_SIZE: number = 44;
 
 let udpSocket: socket.UDPSocket | null = null;
-const workerPort: worker.WorkerPort = worker.workerPort;
+const workerPort: worker.ThreadWorker = worker.workerPort;
 
 // 接收主线程消息
-workerPort.onmessage = (e: MessageEvents) => {
-  const msg = e.data;
-  if (msg.type === 'start') {
+workerPort.onmessage = (e: MessageEvent) => {
+  const msg: Record<string, Object> = e.data as Record<string, Object>;
+  const msgType: string = msg['type'] as string;
+  if (msgType === 'start') {
     startUdp();
-  } else if (msg.type === 'stop') {
+  } else if (msgType === 'stop') {
     stopUdp();
   }
 };
@@ -37,13 +36,11 @@ function startUdp(): void {
       });
 
       udpSocket!.on('error', () => {
-        // UDP 出错，尝试重建
         stopUdp();
         setTimeout(() => startUdp(), 1000);
       });
 
       udpSocket!.on('close', () => {
-        // 被关闭，尝试重建
         setTimeout(() => startUdp(), 1000);
       });
 

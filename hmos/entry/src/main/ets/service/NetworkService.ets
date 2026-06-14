@@ -385,28 +385,27 @@ export class NetworkService {
   private startAudioWorker(): void {
     try {
       this.audioWorker = new worker.ThreadWorker('entry/ets/workers/AudioWorker.ets');
-      this.audioWorker.onmessage = (e: worker.MessageEvents) => {
-        const msg = e.data;
-        if (msg.type === 'audioPacket') {
-          // Worker 线程转发的原始音频包，在主线程反序列化
+      this.audioWorker.onmessage = (e: MessageEvent) => {
+        const msg: Record<string, Object> = e.data as Record<string, Object>;
+        const msgType: string = msg['type'] as string;
+        if (msgType === 'audioPacket') {
           try {
-            const packet = AudioPacket.deserialize(msg.data as ArrayBuffer);
+            const packet = AudioPacket.deserialize(msg['data'] as ArrayBuffer);
             if (packet.msgType === MessageType.AUDIO_DATA) {
               this.onAudioData?.(packet);
             }
           } catch (err) {
             console.error(`[NetworkService] Worker packet parse failed: ${err}`);
           }
-        } else if (msg.type === 'status') {
-          console.info(`[AudioWorker] ${msg.message}`);
-        } else if (msg.type === 'error') {
-          console.error(`[AudioWorker] ${msg.message}`);
+        } else if (msgType === 'status') {
+          console.info(`[AudioWorker] ${msg['message'] as string}`);
+        } else if (msgType === 'error') {
+          console.error(`[AudioWorker] ${msg['message'] as string}`);
         }
       };
-      this.audioWorker.onerror = (err: worker.ErrorEvent) => {
+      this.audioWorker.onerror = (err: ErrorEvent) => {
         console.error(`[AudioWorker] Worker error: ${err.message}`);
       };
-      // 通知 Worker 启动 UDP 接收
       this.audioWorker.postMessage({ type: 'start' });
       console.info('[NetworkService] AudioWorker started');
     } catch (err) {
