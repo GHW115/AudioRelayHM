@@ -14,7 +14,7 @@ const UDP_PORT: number = 9288;
 
 let udpSocket: socket.UDPSocket | null = null;
 
-// 接收主线程消息（不显式标注 workerPort 类型，由编译器推断）
+// 接收主线程消息
 worker.workerPort.onmessage = (e: WorkerMessage) => {
   const msg: Record<string, Object> = e.data;
   const msgType: string = msg['type'] as string;

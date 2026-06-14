@@ -174,7 +174,7 @@ export class AudioPlay {
           encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW,
         },
         rendererInfo: {
-          usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
+          usage: audio.StreamUsage.STREAM_USAGE_ACCESSIBILITY,
           rendererFlags: 0,
         },
       };
@@ -269,17 +269,6 @@ export class AudioPlay {
           break;
         }
       }
-    }
-    // 队列积压超过 2秒 时丢弃旧数据（仅在极端情况下触发）
-    const MAX_QUEUE_BYTES: number = 384000; // 2000ms @ 48kHz 2ch 16bit
-    if (this.bufferSize > MAX_QUEUE_BYTES) {
-      let dropped: number = 0;
-      while (this.bufferSize > MAX_QUEUE_BYTES && this.bufferQueue.length > 0) {
-        let old: ArrayBuffer = this.bufferQueue.shift()!;
-        this.bufferSize -= old.byteLength;
-        dropped += old.byteLength;
-      }
-      console.info(`[AudioPlay] 丢弃积压旧数据: ${dropped}B (${(dropped / 192000 * 1000).toFixed(0)}ms), 剩余队列: ${this.bufferSize}B`);
     }
     // 填充系统提供的 buffer（必须填满，否则杂音）
     let view: Uint8Array = new Uint8Array(buffer);
