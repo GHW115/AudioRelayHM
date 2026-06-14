@@ -270,8 +270,8 @@ export class AudioPlay {
         }
       }
     }
-    // 队列积压超过 200ms 时丢弃旧数据，跳到实时位置（防止熄屏后音画不同步）
-    const MAX_QUEUE_BYTES: number = 38400; // 200ms @ 48kHz 2ch 16bit
+    // 队列积压超过 2秒 时丢弃旧数据（仅在极端情况下触发）
+    const MAX_QUEUE_BYTES: number = 384000; // 2000ms @ 48kHz 2ch 16bit
     if (this.bufferSize > MAX_QUEUE_BYTES) {
       let dropped: number = 0;
       while (this.bufferSize > MAX_QUEUE_BYTES && this.bufferQueue.length > 0) {
