@@ -7,7 +7,9 @@
 #include "multimedia/player_framework/native_avcodec_base.h"
 #include "multimedia/player_framework/native_avformat.h"
 #include "multimedia/player_framework/native_avbuffer.h"
-#include "ohaudio/ohaudio.h"
+#include "ohaudio/native_audiorenderer.h"
+#include "ohaudio/native_audiostreambuilder.h"
+#include "ohaudio/native_audiostream_base.h"
 #include <cstring>
 #include <mutex>
 #include <condition_variable>
@@ -300,18 +302,13 @@ static napi_value NativeAudioInit(napi_env env, napi_callback_info info) {
     OH_AudioStreamBuilder_SetEncodingType(builder, AUDIOSTREAM_ENCODING_PCM);
     OH_AudioStreamBuilder_SetRendererInfo(builder, OH_AUDIOSTREAM_USAGE_MEDIA);
 
-    OH_AudioRenderer_Callback cb;
-    cb.onWriteData = OnAudioWriteData;
-    cb.onReadData = nullptr;
-    cb.onStreamEvent = nullptr;
-    cb.onInterruptEvent = nullptr;
-    cb.onError = nullptr;
-    OH_AudioStreamBuilder_SetRendererCallback(builder, cb, g_ctx);
+    // 使用新版 API（since 12）设置 writeData 回调
+    OH_AudioStreamBuilder_SetRendererWriteDataCallback(builder, OnAudioWriteData, g_ctx);
 
     int32_t ret = OH_AudioStreamBuilder_GenerateRenderer(builder, &g_ctx->renderer);
     OH_AudioStreamBuilder_Destroy(builder);
 
-    if (ret != AUDIO_SUCCESS || !g_ctx->renderer) {
+    if (ret != AUDIOSTREAM_SUCCESS || !g_ctx->renderer) {
         close(g_ctx->udpSocket);
         delete g_ctx;
         g_ctx = nullptr;
@@ -402,7 +399,7 @@ static napi_value NativeAudioStop(napi_env env, napi_callback_info info) {
     // 停止 OHAudio 渲染器
     if (g_ctx->renderer) {
         OH_AudioRenderer_Stop(g_ctx->renderer);
-        OH_AudioRenderer_Destroy(g_ctx->renderer);
+        OH_AudioRenderer_Release(g_ctx->renderer);
         g_ctx->renderer = nullptr;
     }
 
