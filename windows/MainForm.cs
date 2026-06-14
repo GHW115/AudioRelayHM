@@ -205,11 +205,11 @@ public class MainForm : Form
         var cfgCard = new RoundedPanel { Location = new Point(0, 126), Size = new Size(580, 78) };
         var lblCfgTitle = new Label { Text = "当前配置", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(113, 128, 150), Location = new Point(16, 8), AutoSize = true };
-        lblEncoding = new Label { Text = "编码: Opus", Font = new Font("Microsoft YaHei UI", 11),
+        lblEncoding = new Label { Text = "编码: PCM", Font = new Font("Microsoft YaHei UI", 11),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 32), AutoSize = true };
-        lblBitrate = new Label { Text = "码率: 64 kbps", Font = new Font("Microsoft YaHei UI", 11),
+        lblBitrate = new Label { Text = "码率: 0 kbps", Font = new Font("Microsoft YaHei UI", 11),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(200, 32), AutoSize = true };
-        lblBuffer = new Label { Text = "缓冲: 200 ms", Font = new Font("Microsoft YaHei UI", 11),
+        lblBuffer = new Label { Text = "缓冲: 0 ms", Font = new Font("Microsoft YaHei UI", 11),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(380, 32), AutoSize = true };
         cfgCard.Controls.AddRange([lblCfgTitle, lblEncoding, lblBitrate, lblBuffer]);
         // 连接设备卡片
@@ -238,7 +238,7 @@ public class MainForm : Form
         var lblEnc = new Label { Text = "编码方式", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 36), AutoSize = true };
         cboEncoding = new ComboBox { Location = new Point(120, 33), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
-        cboEncoding.Items.AddRange(["PCM", "Opus", "ADPCM"]); cboEncoding.SelectedIndex = 1;
+        cboEncoding.Items.AddRange(["PCM", "Opus", "ADPCM"]); cboEncoding.SelectedIndex = 0;
         var lblBr = new Label { Text = "码率", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 68), AutoSize = true };
         cboBitrate = new ComboBox { Location = new Point(120, 65), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
@@ -246,7 +246,7 @@ public class MainForm : Form
         var lblBuf = new Label { Text = "缓冲时间", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 100), AutoSize = true };
         cboBuffer = new ComboBox { Location = new Point(120, 97), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
-        cboBuffer.Items.AddRange(["0 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1000 ms"]); cboBuffer.SelectedIndex = 2;
+        cboBuffer.Items.AddRange(["0 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1000 ms"]); cboBuffer.SelectedIndex = 0;
         // 输出设备选择
         var lblDev = new Label { Text = "输出设备", Font = new Font("Microsoft YaHei UI", 10),
             ForeColor = Color.FromArgb(45, 55, 72), Location = new Point(16, 132), AutoSize = true };
@@ -718,7 +718,7 @@ public class LowLatencyLoopbackCapture : IDisposable {
 public class AudioCaptureService {
     private LowLatencyLoopbackCapture? cap;
     private NetworkServer? srv;
-    private EncodingType encodingType = EncodingType.Opus;
+    private EncodingType encodingType = EncodingType.Pcm;
     private int sampleRate = 48000;
     private int channels = 2;
     private int opusBitrate = 64; // kbps

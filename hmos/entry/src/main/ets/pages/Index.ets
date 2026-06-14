@@ -19,8 +19,8 @@ struct Index {
   @State private isConnected: boolean = false;
   @State private phoneToPCActive: boolean = false;
   @State private statusText: string = '就绪';
-  @State private encodingIndex: number = 2;
-  @State private bufferIndex: number = 2;
+  @State private encodingIndex: number = 0;
+  @State private bufferIndex: number = 0;
   private encodingOptions: SelectOption[] = [
     { value: 'PCM' },
     { value: 'Opus 32k' }, { value: 'Opus 64k' },
