@@ -266,6 +266,8 @@ export class AudioPlay {
     }
     // 填充系统提供的 buffer（必须填满，否则杂音）
     let view: Uint8Array = new Uint8Array(buffer);
+    // 先清零整个 buffer，防止旧数据循环播放
+    view.fill(0);
     let filled: number = 0;
     while (filled < buffer.byteLength && this.bufferQueue.length > 0) {
       let f: ArrayBuffer = this.bufferQueue.shift()!;
