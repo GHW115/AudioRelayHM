@@ -1,17 +1,17 @@
-{
+﻿{
   "app": {
     "signingConfigs": [
       {
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "REDACTED_KEY_PASSWORD",
-          "profile": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p7b",
+          "certpath": "${env.OHOS_CERT_PATH}",
+          "keyAlias": "${env.OHOS_KEY_ALIAS}",
+          "keyPassword": "${env.OHOS_KEY_PASSWORD}",
+          "profile": "${env.OHOS_PROFILE_PATH}",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\<USER>\\.ohos\\config\\default_AudioRelayHMOS_LeYADvF7tJis8QL5ngOcG07DxHdJH0Ymh89Ih2S5x0g=.p12",
-          "storePassword": "REDACTED_STORE_PASSWORD"
+          "storeFile": "${env.OHOS_STORE_FILE}",
+          "storePassword": "${env.OHOS_STORE_PASSWORD}"
         }
       }
     ],

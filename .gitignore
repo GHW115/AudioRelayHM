@@ -11,6 +11,8 @@ code-linter.json5
 *.hap
 *.hsp
 *.zip
+# 本地签名材料（含证书密码），不入库
+hmos/signing.local.env
 
 # ===== Windows (.NET) =====
 bin/
@@ -24,6 +26,10 @@ obj/
 .vs/
 *.swp
 *.swo
+
+# ===== Reasonix 工具 =====
+.reasonix/
+reasonix.toml
 
 # ===== OS =====
 .DS_Store
