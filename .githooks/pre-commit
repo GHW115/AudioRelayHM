@@ -1,0 +1,28 @@
+#!/bin/sh
+# AudioRelayHM Pre-commit Hook
+# 每次 git commit 前自动运行 Windows 端 30 个单元测试
+# 任何失败都会阻止提交
+
+echo ""
+echo "=============================="
+echo "  AudioRelayHM Pre-commit"
+echo "=============================="
+echo ""
+
+echo "[1/1] dotnet test (Windows)..."
+dotnet test windows/AudioRelayWinUI.Tests/AudioRelayWinUI.Tests.csproj \
+    --configuration Release \
+    --verbosity quiet
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "[OK] 30 tests passed"
+    echo ""
+    exit 0
+else
+    echo ""
+    echo "[FAIL] Tests failed -- commit blocked"
+    echo "  Run: dotnet test windows/AudioRelayWinUI.Tests/"
+    echo ""
+    exit 1
+fi
