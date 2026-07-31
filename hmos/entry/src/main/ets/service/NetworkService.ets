@@ -1,5 +1,5 @@
 /**
- * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 🤖 AI 辅助生成 — DeepSeek V4
  * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
  */
 
@@ -36,6 +36,9 @@ export class NetworkService {
   private heartbeatTimer: number = -1;
   private autoReconnectTimer: number = -1;
   private readonly HEADER_SIZE: number = 44;
+  // 粘包解析缓冲上限：超过视为畸形/恶意数据流，直接重置（防止内存无界增长）
+  private static readonly MAX_RECV_BUFFER: number = 1024 * 1024;
+  private static readonly MAX_PAYLOAD: number = 65536;
   private recvBuf: ArrayBuffer = new ArrayBuffer(0);
   private recvView: Uint8Array = new Uint8Array(0);
 
@@ -78,6 +81,8 @@ export class NetworkService {
       this.tcpSocket.on('error', (err: BusinessError) => {
         console.error(`[NetworkService] Socket error: ${err.message}`);
         this.onError?.(err.message);
+        // error 后连接已失效，走统一断开流程（含自动重连）
+        this.handleDisconnect();
       });
 
       const addr: socket.NetAddress = {
@@ -188,6 +193,14 @@ export class NetworkService {
     await this.sendControl(ControlCommand.TIME_SYNC, payload);
   }
 
+  /**
+   * 发送延迟分项报告（手机→PC）
+   * @param statsPayload 16字节 ArrayBuffer: 4个int32 LE (network, pcProcess, buffer, renderer)
+   */
+  async sendLatencyReport(statsPayload: ArrayBuffer): Promise<void> {
+    await this.sendControl(ControlCommand.LATENCY_REPORT, statsPayload);
+  }
+
   async sendControl(command: ControlCommand, payload?: ArrayBuffer): Promise<void> {
     const packet = new AudioPacket();
     packet.msgType = MessageType.CONTROL;
@@ -215,7 +228,7 @@ export class NetworkService {
     }
   }
 
-  private handleData(data: ArrayBuffer | string): void {
+  public handleData(data: ArrayBuffer | string): void {
     try {
       let newBytes: ArrayBuffer;
       if (typeof data === 'string') {
@@ -230,9 +243,25 @@ export class NetworkService {
       this.recvBuf = merged.buffer.slice(0);
       this.recvView = new Uint8Array(this.recvBuf);
 
+      // 缓冲上限保护：畸形/恶意包头会让 recvBuf 无限累积
+      if (this.recvBuf.byteLength > NetworkService.MAX_RECV_BUFFER) {
+        console.error(`[NetworkService] recvBuf overflow (${this.recvBuf.byteLength}B), reset`);
+        this.recvBuf = new ArrayBuffer(0);
+        this.recvView = new Uint8Array(0);
+        return;
+      }
+
       while (this.recvBuf.byteLength >= this.HEADER_SIZE) {
-        let payloadLen = this.recvView[40] | (this.recvView[41] << 8) |
-          (this.recvView[42] << 16) | (this.recvView[43] << 24);
+        // >>> 0：byte43 ≥ 0x80 时按无符号读取，避免 payloadLen 变负数
+        let payloadLen = ((this.recvView[40] | (this.recvView[41] << 8) |
+          (this.recvView[42] << 16) | (this.recvView[43] << 24)) >>> 0);
+        // 负载长度非法（超 64KB）：数据流已损坏，丢弃整个缓冲
+        if (payloadLen > NetworkService.MAX_PAYLOAD) {
+          console.error(`[NetworkService] invalid payloadLen ${payloadLen}, reset buffer`);
+          this.recvBuf = new ArrayBuffer(0);
+          this.recvView = new Uint8Array(0);
+          return;
+        }
         let totalLen = this.HEADER_SIZE + payloadLen;
 
         if (this.recvBuf.byteLength < totalLen) {
@@ -259,7 +288,8 @@ export class NetworkService {
   private async sendHandshake(): Promise<void> {
     const encoder = new util.TextEncoder();
     let u8: Uint8Array = encoder.encodeInto('AudioRelayHMOS');
-    const payload: ArrayBuffer = u8.buffer as ArrayBuffer;
+    // slice(0)：确保 ArrayBuffer 精确到内容长度（encodeInto 返回的 buffer 可能更大）
+    const payload: ArrayBuffer = u8.slice(0).buffer as ArrayBuffer;
     await this.sendControl(ControlCommand.HANDSHAKE, payload);
   }
 

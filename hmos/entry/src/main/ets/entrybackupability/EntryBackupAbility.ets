@@ -1,5 +1,5 @@
 /**
- * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 🤖 AI 辅助生成 — DeepSeek V4
  * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
  */
 

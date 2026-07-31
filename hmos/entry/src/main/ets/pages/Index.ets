@@ -1,5 +1,5 @@
 /**
- * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 🤖 AI 辅助生成 — DeepSeek V4
  * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
  */
 
@@ -9,6 +9,8 @@ import { NetworkService, ConnectionState } from '../service/NetworkService';
 import { AudioCapture, AudioCaptureCallback } from '../service/AudioCapture';
 import { AudioPlay, AudioPlayCallback } from '../service/AudioPlay';
 import { AudioPacket, StreamDirection, ControlCommand } from '../model/AudioPacket';
+import { nativeAudioSetClockOffset, nativeAudioGetLatencyStats } from 'libopus_decoder.so';
+import router from '@ohos.router';
 
 @Entry
 @Component
@@ -37,6 +39,8 @@ struct Index {
   private audioPlay: AudioPlay = new AudioPlay();
   private lastLatencyReport: number = 0;
   private clockOffset: number = 0;
+  private latencyReportTimer: number = -1;
+  private animTimer: number = -1; // 脉冲动画定时器句柄（aboutToDisappear 必须清理）
 
   aboutToAppear(): void {
     let ctx = AppStorage.get<Context>('abilityContext');
@@ -45,10 +49,19 @@ struct Index {
       this.audioCapture.setContext(ctx);
     }
     this.setupCallbacks();
-    // 脉冲动画
-    setInterval(() => {
+    // 脉冲动画（保存句柄，页面销毁时清理，防止定时器泄漏与已销毁组件交互）
+    this.animTimer = setInterval(() => {
       this.animScale = this.animScale > 1.0 ? 0.8 : 1.0;
     }, 1500);
+  }
+
+  aboutToDisappear(): void {
+    // 页面销毁：清理全部定时器
+    if (this.animTimer !== -1) {
+      clearInterval(this.animTimer);
+      this.animTimer = -1;
+    }
+    this.stopLatencyReporting();
   }
 
   private setupCallbacks(): void {
@@ -61,6 +74,7 @@ struct Index {
           this.phoneToPCActive = false;
           this.audioCapture.stop();
           this.audioPlay.stop();
+          this.stopLatencyReporting();
           break;
         case ConnectionState.CONNECTING:
           this.connectionState = '连接中...';
@@ -77,12 +91,14 @@ struct Index {
           this.sendCurrentConfig();
           // 时钟同步
           this.networkService.sendTimeSync();
+          // 启动延迟上报（每秒1次）
+          this.startLatencyReporting();
           break;
       }
     };
 
-    // PC→手机音频现在由 NAPI 原生层直接处理（UDP接收 + OHAudio渲染），不经过 ArkTS 层
-    // 延迟报告暂禁用，待 NAPI 层添加统计接口后恢复
+    // PC→手机音频由 NAPI 原生层直接处理（UDP接收 + OHAudio渲染）
+    // 延迟分项统计由 NAPI nativeAudioGetLatencyStats 提供，ArkTS 层每秒上报
 
     this.networkService.onControlMessage = (packet: AudioPacket) => {
       if (packet.command === ControlCommand.TIME_SYNC && packet.payload.byteLength >= 16) {
@@ -98,6 +114,7 @@ struct Index {
         // 计算时钟偏差: offset = (t1 + t3) / 2 - pcTime
         let t3: number = Date.now();
         this.clockOffset = Math.floor((phoneTime + t3) / 2) - pcTime;
+        nativeAudioSetClockOffset(this.clockOffset);
         console.info(`[Index] 时钟偏差校准: ${this.clockOffset}ms`);
       }
     };
@@ -162,6 +179,12 @@ struct Index {
           .fontSize(12)
           .fontColor('#A0AEC0')
           .margin({ top: 4 })
+
+        Button('测试')
+          .fontSize(10).height(24).width(48)
+          .backgroundColor('#E0E0E0').fontColor('#666')
+          .margin({ top: 8 })
+          .onClick(() => { router.pushUrl({ url: 'pages/TestPage' }); })
       }
       .width('100%')
       .padding({ top: 36, bottom: 20 })
@@ -425,6 +448,40 @@ struct Index {
     } else {
       this.audioCapture.stop();
       this.statusText = '手机麦克风 → PC 已关闭';
+    }
+  }
+
+  /**
+   * 启动延迟上报定时器：每秒从 NAPI 层拉取延迟统计并发送给 PC
+   */
+  private startLatencyReporting(): void {
+    if (this.latencyReportTimer !== -1) {
+      return; // 已在运行
+    }
+    this.latencyReportTimer = setInterval(() => {
+      if (!this.isConnected) {
+        return;
+      }
+      // 时钟尚未校准时不发送报告（网络分项会因时钟偏差而出现垃圾值）
+      if (this.clockOffset === 0) {
+        return;
+      }
+      try {
+        const statsBuf: ArrayBuffer = nativeAudioGetLatencyStats();
+        this.networkService.sendLatencyReport(statsBuf);
+      } catch (err) {
+        console.error(`[Index] 延迟上报失败: ${err}`);
+      }
+    }, 200); // 200ms 采样率，匹配图表刷新周期，捕获短时抖动
+  }
+
+  /**
+   * 停止延迟上报定时器
+   */
+  private stopLatencyReporting(): void {
+    if (this.latencyReportTimer !== -1) {
+      clearInterval(this.latencyReportTimer);
+      this.latencyReportTimer = -1;
     }
   }
 

@@ -1,5 +1,5 @@
 /**
- * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 🤖 AI 辅助生成 — DeepSeek V4
  * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
  */
 
@@ -142,6 +142,10 @@ export class AudioPacket {
    * 从 ArrayBuffer 反序列化
    */
   static deserialize(buffer: ArrayBuffer): AudioPacket {
+    const HEADER_SIZE = 44;
+    if (buffer.byteLength < HEADER_SIZE) {
+      throw new Error(`AudioPacket too short: ${buffer.byteLength} < ${HEADER_SIZE}`);
+    }
     const view = new DataView(buffer);
     const packet = new AudioPacket();
     let offset = 0;
@@ -180,26 +184,13 @@ export class AudioPacket {
     const payloadLength = view.getInt32(offset, true); offset += 4;
 
     if (payloadLength > 0) {
+      // 防御：负载长度超出实际缓冲（畸形/恶意包）
+      if (payloadLength > buffer.byteLength - offset) {
+        throw new Error(`AudioPacket payload length ${payloadLength} exceeds buffer`);
+      }
       packet.payload = buffer.slice(offset, offset + payloadLength);
     }
 
     return packet;
-  }
-}
-
-/**
- * 音频配置参数
- */
-export class AudioConfig {
-  sampleRate: number = 48000;
-  channels: number = 2;
-  bitsPerSample: number = 16;
-  frameSize: number = 4096;
-
-  /**
-   * 计算每帧字节数
-   */
-  getFrameBytes(): number {
-    return this.frameSize * this.channels * (this.bitsPerSample / 8);
   }
 }

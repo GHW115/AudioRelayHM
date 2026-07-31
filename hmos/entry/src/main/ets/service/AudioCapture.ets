@@ -1,5 +1,5 @@
 /**
- * 🤖 AI 辅助生成 — Claude (Anthropic)
+ * 🤖 AI 辅助生成 — DeepSeek V4
  * 项目: AudioRelayHM 鸿蒙↔Windows 音频串流
  */
 
@@ -87,6 +87,13 @@ export class AudioCapture {
       this.startBackgroundTask();
       console.info('[AudioCapture] Started');
     } catch (err) {
+      // 失败路径：释放已创建的 capturer，避免泄漏
+      try {
+        await this.audioCapturer?.release();
+      } catch (e) {
+        console.error(`[AudioCapture] Cleanup release error: ${e}`);
+      }
+      this.audioCapturer = null;
       let errorMsg: string;
       if (err instanceof Error) {
         errorMsg = err.message;
@@ -101,14 +108,26 @@ export class AudioCapture {
   async stop(): Promise<void> {
     this.isCapturing = false;
     this.stopBackgroundTask();
-    try {
-      this.audioCapturer?.off('readData');
-      await this.audioCapturer?.stop();
-      await this.audioCapturer?.release();
-    } catch (err) {
-      console.error(`[AudioCapture] Stop error: ${err}`);
-    }
+    const capturer = this.audioCapturer;
     this.audioCapturer = null;
+    if (capturer) {
+      try {
+        capturer.off('readData');
+      } catch (err) {
+        console.error(`[AudioCapture] off error: ${err}`);
+      }
+      // stop/release 相互独立：一个失败不阻断另一个，保证资源最终释放
+      try {
+        await capturer.stop();
+      } catch (err) {
+        console.error(`[AudioCapture] Stop error: ${err}`);
+      }
+      try {
+        await capturer.release();
+      } catch (err) {
+        console.error(`[AudioCapture] Release error: ${err}`);
+      }
+    }
     console.info('[AudioCapture] Stopped');
   }
 
