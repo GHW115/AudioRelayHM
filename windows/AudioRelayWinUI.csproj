@@ -12,4 +12,8 @@
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="AudioRelayWinUI.Tests\**" />
+    <None Remove="AudioRelayWinUI.Tests\**" />
+  </ItemGroup>
 </Project>
