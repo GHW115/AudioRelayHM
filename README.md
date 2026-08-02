@@ -158,21 +158,28 @@ NTP 风格校准，消除双端时钟偏差：
 
 签名材料**不入库**：`build-profile.json5` 通过 `${env.OHOS_*}` 引用环境变量，真实值存于 gitignored 的 `hmos/signing.local.env`。
 
-**方式一：命令行构建（推荐）**
+**方式一：DevEco Studio GUI**
+
+> ⚠️ 本 SDK 的 hvigor 不解析 `${env.X}` 语法（GUI/命令行均如此，报错 00303107）。仓库中的 `build-profile.json5` 是环境变量引用版（安全），GUI 构建前需生成本地明文版：
+
+1. 首次使用（或换证书后）运行：
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts/setup-local-signing.ps1
+   ```
+   该脚本从 `hmos/signing.local.env` 生成本地明文 `build-profile.json5`，并自动 `git update-index --skip-worktree`（明文永远不会被提交）
+2. 重启或刷新 DevEco Studio
+3. 打开 `hmos/` 目录，连接鸿蒙设备后 Run
+
+**方式二：命令行构建（推荐 CI/脚本场景）**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build-hap.ps1 -BuildMode debug
 ```
 
-脚本自动：读取本地签名 → 生成临时明文配置 → 调用 hvigorw 构建 → 恢复安全配置。
+脚本自动：读取本地签名 → 生成临时明文配置 → 调用 hvigorw 构建 → 恢复配置。
 产物：`hmos/entry/build/default/outputs/default/entry-default-signed.hap`
 
 > ⚠️ 不要直接运行 hvigorw：命令行 hvigor 不解析 `${env.X}`，且 JSON 单反斜杠会被解析器吞掉。
-
-**方式二：DevEco Studio GUI**
-
-1. 首次使用先运行 `scripts/apply-signing-env.ps1` 导入签名环境变量，重启 DevEco
-2. 打开 `hmos/` 目录，连接鸿蒙设备后 Run
 
 ### Windows 端
 

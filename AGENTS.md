@@ -200,7 +200,7 @@ PC BufferedWaveProvider → WaveOutEvent → 虚拟音频设备
 | **hvigor-config.json5** | 必须置于 `hmos/hvigor/` 子目录，`modelVersion` 与 `oh-package.json5` 保持一致 |
 | **hvigor modelVersion** | 通过 `hvigor-config.json5` 显式配置 |
 | **signingConfigs** | 使用 HarmonyOS 自动签名（Debug），**证书路径与密码不入库**：`build-profile.json5` 通过 `${env.OHOS_*}` 环境变量引用，本地值存于 gitignored 的 `hmos/signing.local.env`，用 `scripts/apply-signing-env.ps1` 导入（改证书后需重启 DevEco） |
-| **鸿蒙编译** | DevEco Studio 打开 `hmos/` 目录；命令行构建用 `powershell -ExecutionPolicy Bypass -File scripts/build-hap.ps1`（自动注入本地签名并恢复安全配置，**不要**直接跑 hvigorw——命令行 hvigor 不解析 `${env.X}` 且 JSON 单反斜杠会被吃掉） |
+| **鸿蒙编译** | DevEco Studio 打开 `hmos/` 目录；命令行构建用 `powershell -ExecutionPolicy Bypass -File scripts/build-hap.ps1`（自动注入本地签名并恢复安全配置，**不要**直接跑 hvigorw——命令行 hvigor 不解析 `${env.X}` 且 JSON 单反斜杠会被吃掉）。**GUI 构建**：本 SDK 的 hvigor 同样不解析 `${env.X}`，需先跑 `scripts/setup-local-signing.ps1` 生成本地明文配置（自动 `git update-index --skip-worktree`，明文不入库），然后重启/刷新 DevEco 直接构建 |
 | **ohpm** | 依赖锁定在 `oh-package-lock.json5` |
 
 ---
