@@ -526,8 +526,11 @@ static void UdpReceiveLoop(NativeAudioContext *ctx) {
         // ==============================================
         int64_t offset = ctx->clockOffset.load(std::memory_order_acquire);
 
-        // PC处理延迟: encodeTime - captureTime
-        ctx->latestPcProcessMs.store((int)(encodeTime - captureTime), std::memory_order_release);
+        // PC处理延迟: encodeTime - captureTime（已含 WASAPI 采集排队）
+        // Opus 模式额外 +20ms 帧对齐时长（960 样本 @48kHz），使延迟更接近真实感知值
+        int pcProcessMs = (int)(encodeTime - captureTime);
+        if (encoding == 1) pcProcessMs += 20;
+        ctx->latestPcProcessMs.store(pcProcessMs, std::memory_order_release);
         // 网络延迟: phoneNow - offset - sendTime (偏移校准后的单向网络延迟)
         int networkMs = (int)(phoneNowMs - offset - sendTime);
         if (networkMs < 0) networkMs = 0; // 时钟偏差可能导致微小负值

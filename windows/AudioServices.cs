@@ -93,6 +93,8 @@ public class AudioCaptureService {
     private int opusBitrate = 64; // kbps
     private IOpusEncoder? opusEncoder;
     private List<short> opusBuffer = new();
+    // WASAPI 环回采集排队时长（与 LowLatencyLoopbackCapture 的 bufferPeriod 一致）
+    private const int CaptureQueueMs = 30;
     // 保护 opusEncoder/opusBuffer 跨线程访问（TCP 控制线程 vs WASAPI 捕获线程）
     private readonly object audioLock = new();
     public event Action<string>? OnLog;
@@ -167,8 +169,10 @@ public class AudioCaptureService {
         _lastCallbackTime = now2;
         _callbackCount2++;
 
-        // 在最早处捕获时间戳，用于端到端延迟测量
-        long captureTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // 在最早处捕获时间戳，用于端到端延迟测量。
+        // 减去 WASAPI 采集排队（30ms bufferPeriod）：回调触发时，这批音频已排队等待
+        // 采集，把这段计入延迟后更接近用户实际感知的端到端延迟
+        long captureTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - CaptureQueueMs;
 
         int srcChannels = channels;
         int srcFrames = e.BytesRecorded / (4 * srcChannels); // float32 per sample

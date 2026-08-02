@@ -39,7 +39,7 @@
 
 - **端到端延迟**：6 环节组成（WASAPI采集→编码→网络→解码→AudioRenderer→缓冲补偿）
 - **延迟分项显示**：PC 端堆叠面积图，4 个物理分项：
-  - **PC 处理**（蓝）：encodeTime - captureTime
+  - **PC 处理**（蓝）：encodeTime - captureTime（已含 WASAPI 30ms 采集排队；Opus 模式另 +20ms 帧对齐时长）
   - **网络传输**（绿）：phoneNow - sendTime - clockOffset
   - **缓冲等待**（橙）：AudioRenderer 队列等待
   - **渲染**（紫）：解码 + AudioRenderer 硬件渲染
