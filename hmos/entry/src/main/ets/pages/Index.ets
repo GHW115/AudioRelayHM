@@ -47,6 +47,7 @@ struct Index {
     if (ctx) {
       this.audioPlay.setContext(ctx);
       this.audioCapture.setContext(ctx);
+      this.networkService.setContext(ctx);
     }
     this.setupCallbacks();
     // 脉冲动画（保存句柄，页面销毁时清理，防止定时器泄漏与已销毁组件交互）

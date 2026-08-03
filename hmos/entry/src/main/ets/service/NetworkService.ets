@@ -11,6 +11,8 @@ import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { wantAgent, WantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 
 /**
  * 网络连接状态
@@ -46,6 +48,16 @@ export class NetworkService {
   onAudioData?: (packet: AudioPacket) => void;
   onControlMessage?: (packet: AudioPacket) => void;
   onError?: (error: string) => void;
+
+  private context: Context | null = null;
+  private backgroundTaskRunning: boolean = false;
+
+  /**
+   * 注入 Context（用于后台保活任务）
+   */
+  setContext(context: Context): void {
+    this.context = context;
+  }
 
   get state(): ConnectionState {
     return this._state;
@@ -101,6 +113,9 @@ export class NetworkService {
       await this.sendHandshake();
       this.startHeartbeat();
       await this.createUdpSendSocket();
+      // 连接期间启动 DATA_TRANSFER 后台任务：无音频播放时（无 AUDIO_PLAYBACK 任务）
+      // 手机退后台不会被系统冻结/回收，TCP 连接得以保持
+      void this.startBackgroundTask();
 
       console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + NAPI UDP audio)`);
     } catch (err) {
@@ -120,6 +135,7 @@ export class NetworkService {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+    void this.stopBackgroundTask();
     if (this.autoReconnectTimer !== -1) {
       clearTimeout(this.autoReconnectTimer);
       this.autoReconnectTimer = -1;
@@ -307,12 +323,60 @@ export class NetworkService {
     }
   }
 
+  /**
+   * 后台保活任务（DATA_TRANSFER 长时任务）：连接期间持续运行，
+   * 防止无音频播放时进程退后台被系统冻结/回收导致 TCP 断开
+   */
+  private async startBackgroundTask(): Promise<void> {
+    if (this.backgroundTaskRunning || !this.context) {
+      return;
+    }
+    try {
+      let wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [
+          {
+            bundleName: this.context.applicationInfo.name,
+            abilityName: 'EntryAbility',
+          }
+        ],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
+      };
+      let wantAgentObj: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
+      await backgroundTaskManager.startBackgroundRunning(
+        this.context,
+        backgroundTaskManager.BackgroundMode.DATA_TRANSFER,
+        wantAgentObj
+      );
+      this.backgroundTaskRunning = true;
+      console.info('[NetworkService] DATA_TRANSFER 后台保活任务已启动');
+    } catch (err) {
+      let error = err as BusinessError;
+      console.error(`[NetworkService] 后台保活任务启动失败: code=${error.code}, ${error.message}`);
+    }
+  }
+
+  private async stopBackgroundTask(): Promise<void> {
+    if (!this.backgroundTaskRunning || !this.context) {
+      return;
+    }
+    try {
+      await backgroundTaskManager.stopBackgroundRunning(this.context);
+      this.backgroundTaskRunning = false;
+      console.info('[NetworkService] 后台保活任务已停止');
+    } catch (err) {
+      console.error(`[NetworkService] 停止后台保活任务失败: ${err}`);
+    }
+  }
+
   private handleDisconnect(): void {
     if (this._state === ConnectionState.DISCONNECTED) {
       return;
     }
     this.stopHeartbeat();
     this.closeUdpSendSocket();
+    void this.stopBackgroundTask();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
     console.info('[NetworkService] Connection closed');
