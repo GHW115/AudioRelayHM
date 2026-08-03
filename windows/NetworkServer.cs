@@ -182,7 +182,8 @@ public class NetworkServer {
         }
     }
 
-    /// 主动心跳保活：每 2s 发送 HEARTBEAT，独立于手机端心跳（手机后台冻结定时器时仍保活）
+    /// 主动心跳保活：每 1s 发送 HEARTBEAT，独立于手机端心跳（手机后台冻结定时器时仍保活）。
+    /// 1s 间隔：锁屏后保持 TCP 双向持续数据流，同时为 DATA_TRANSFER 长时任务提供活动证据
     private static async Task HeartbeatLoop(NetworkStream stream, CancellationToken tk) {
         var hb = new AudioPacket {
             MsgType = MessageType.Control, Command = ControlCommand.Heartbeat,
@@ -192,7 +193,7 @@ public class NetworkServer {
         var bytes = hb.Serialize();
         try {
             while (!tk.IsCancellationRequested) {
-                await Task.Delay(2000, tk);
+                await Task.Delay(1000, tk);
                 try { await stream.WriteAsync(bytes, tk); }
                 catch (Exception) { break; } // 连接已断开，退出保活
             }
