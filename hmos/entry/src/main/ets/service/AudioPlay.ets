@@ -81,7 +81,6 @@ export class AudioPlay {
     try {
       // AVSession 必须在 NAPI 音频管线之前创建
       await this.createAVSession();
-      this.startBackgroundTask();
 
       // 初始化 NAPI 原生音频管线（UDP接收 + Opus解码 + OHAudio渲染）
       const initResult: number = nativeAudioInit(this._sampleRate, this._channels);
@@ -99,6 +98,11 @@ export class AudioPlay {
       if (startResult !== 0) {
         throw new Error(`nativeAudioStart failed: ${startResult}`);
       }
+
+      // 音频已真实开始渲染后才启动后台任务：
+      // AUDIO_PLAYBACK 连续任务校验要求应用处于实际播放状态，先启动会报 9800005
+      // (Continuous task verification failed)
+      await this.startBackgroundTask();
 
       this.isPlaying = true;
       this.callback?.onInfo('NAPI 原生音频管线已启动');
