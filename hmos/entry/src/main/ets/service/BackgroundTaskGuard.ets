@@ -75,12 +75,15 @@ export class BackgroundTaskGuard {
     if (BackgroundTaskGuard.refCount === 0 && BackgroundTaskGuard.running) {
       try {
         await backgroundTaskManager.stopBackgroundRunning(BackgroundTaskGuard.context);
-        BackgroundTaskGuard.running = false;
-        BackgroundTaskGuard.context = null;
         console.info('[BackgroundTaskGuard] 后台保活任务已停止');
       } catch (err) {
-        console.error(`[BackgroundTaskGuard] 停止失败: ${err}`);
+        let error = err as BusinessError;
+        console.error(`[BackgroundTaskGuard] 停止失败: code=${error.code}, ${error.message}`);
       }
+      // 无论成败都复位标志：锁屏冻结期间 stop 的 IPC 会失败，若不复位，
+      // 自动重连后 acquire() 会误以为任务仍在运行而不再重新启动，保活永久失效
+      BackgroundTaskGuard.running = false;
+      BackgroundTaskGuard.context = null;
     }
   }
 }

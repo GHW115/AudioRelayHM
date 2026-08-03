@@ -520,7 +520,13 @@ static void UdpReceiveLoop(NativeAudioContext *ctx) {
         // 定期重启渲染器，确保它始终处于播放状态
         static int64_t lastRendererCheck = 0;
         if (ctx->renderer && phoneNowMs - lastRendererCheck > 2000) {
-            OH_AudioRenderer_Start(ctx->renderer);
+            // 仅当渲染器不在 RUNNING 状态时才重启（重复 Start 已运行中的 renderer
+            // 会报 Illegal state / Start failed，日志里每 2s 一条的报错即来源于此）
+            OH_AudioStream_State st = AUDIOSTREAM_STATE_NEW;
+            if (OH_AudioRenderer_GetCurrentState(ctx->renderer, &st) == AUDIOSTREAM_SUCCESS
+                && st != AUDIOSTREAM_STATE_RUNNING) {
+                OH_AudioRenderer_Start(ctx->renderer);
+            }
             lastRendererCheck = phoneNowMs;
         }
         // ==============================================
@@ -833,8 +839,16 @@ static napi_value NativeAudioStart(napi_env env, napi_callback_info /*info*/) {
     // 启动 UDP 接收线程
     g_ctx->udpThread = new std::thread(UdpReceiveLoop, g_ctx);
 
-    // 启动 OHAudio 渲染器
-    OH_AudioRenderer_Start(g_ctx->renderer);
+    // 启动 OHAudio 渲染器（检查返回值：失败时向上层报错，而不是假装成功）
+    OH_AudioStream_Result startRet = OH_AudioRenderer_Start(g_ctx->renderer);
+    if (startRet != AUDIOSTREAM_SUCCESS) {
+        OH_AudioRenderer_Release(g_ctx->renderer);
+        g_ctx->renderer = nullptr;
+        g_ctx->running.store(false);
+        napi_value r;
+        napi_create_int32(env, -5, &r);
+        return r;
+    }
 
     // 查询 OHAudio 真实渲染延迟（只查一次，避免频繁调用阻塞路由变更）
     int32_t latencyMs = 0;
