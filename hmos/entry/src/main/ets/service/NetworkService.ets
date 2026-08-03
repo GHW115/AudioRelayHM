@@ -12,6 +12,8 @@ import { util } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { BackgroundTaskGuard } from './BackgroundTaskGuard';
+import { Logger } from './Logger';
+
 
 /**
  * 网络连接状态
@@ -89,7 +91,7 @@ export class NetworkService {
       });
 
       this.tcpSocket.on('error', (err: BusinessError) => {
-        console.error(`[NetworkService] Socket error: ${err.message}`);
+        Logger.error('NetworkService', `Socket error: ${err.message}`);
         this.onError?.(err.message);
         // error 后连接已失效，走统一断开流程（含自动重连）
         this.handleDisconnect();
@@ -115,7 +117,7 @@ export class NetworkService {
       // 手机退后台不会被系统冻结/回收，TCP 连接得以保持
       void this.startBackgroundTask();
 
-      console.info(`[NetworkService] Connected to ${host}:${port} (TCP control + NAPI UDP audio)`);
+      Logger.info('NetworkService', `Connected to ${host}:${port} (TCP control + NAPI UDP audio)`);
     } catch (err) {
       this._state = ConnectionState.DISCONNECTED;
       this.onStateChange?.(this._state);
@@ -125,7 +127,7 @@ export class NetworkService {
       } else {
         errorMsg = String(err);
       }
-      console.error(`[NetworkService] Connect failed: ${errorMsg}`);
+      Logger.error('NetworkService', `Connect failed: ${errorMsg}`);
       this.onError?.(`连接失败: ${errorMsg}`);
       throw new Error(errorMsg);
     }
@@ -148,10 +150,10 @@ export class NetworkService {
       this.tcpSocket?.off('error');
       await this.tcpSocket?.close();
     } catch (err) {
-      console.error(`[NetworkService] Disconnect error: ${err}`);
+      Logger.error('NetworkService', `Disconnect error: ${err}`);
     }
     this.tcpSocket = null;
-    console.info('[NetworkService] Disconnected');
+    Logger.info('NetworkService', 'Disconnected');
   }
 
   /**
@@ -185,7 +187,7 @@ export class NetworkService {
       };
       await this.udpSendSocket.send(sendOpts);
     } catch (err) {
-      console.error(`[NetworkService] UDP audio send failed: ${err}`);
+      Logger.error('NetworkService', `UDP audio send failed: ${err}`);
     }
   }
 
@@ -229,7 +231,7 @@ export class NetworkService {
 
   private async sendPacket(packet: AudioPacket): Promise<void> {
     if (this._state !== ConnectionState.CONNECTED || !this.tcpSocket) {
-      console.warn('[NetworkService] Cannot send: not connected');
+      Logger.warn('NetworkService', 'Cannot send: not connected');
       return;
     }
     try {
@@ -237,7 +239,7 @@ export class NetworkService {
       const sendOpts: socket.TCPSendOptions = { data: data };
       await this.tcpSocket.send(sendOpts);
     } catch (err) {
-      console.error(`[NetworkService] Send failed: ${err}`);
+      Logger.error('NetworkService', `Send failed: ${err}`);
       this.handleDisconnect();
     }
   }
@@ -259,7 +261,7 @@ export class NetworkService {
 
       // 缓冲上限保护：畸形/恶意包头会让 recvBuf 无限累积
       if (this.recvBuf.byteLength > NetworkService.MAX_RECV_BUFFER) {
-        console.error(`[NetworkService] recvBuf overflow (${this.recvBuf.byteLength}B), reset`);
+        Logger.error('NetworkService', `recvBuf overflow (${this.recvBuf.byteLength}B), reset`);
         this.recvBuf = new ArrayBuffer(0);
         this.recvView = new Uint8Array(0);
         return;
@@ -271,7 +273,7 @@ export class NetworkService {
           (this.recvView[42] << 16) | (this.recvView[43] << 24)) >>> 0);
         // 负载长度非法（超 64KB）：数据流已损坏，丢弃整个缓冲
         if (payloadLen > NetworkService.MAX_PAYLOAD) {
-          console.error(`[NetworkService] invalid payloadLen ${payloadLen}, reset buffer`);
+          Logger.error('NetworkService', `invalid payloadLen ${payloadLen}, reset buffer`);
           this.recvBuf = new ArrayBuffer(0);
           this.recvView = new Uint8Array(0);
           return;
@@ -295,7 +297,7 @@ export class NetworkService {
         }
       }
     } catch (err) {
-      console.error(`[NetworkService] Parse data failed: ${err}`);
+      Logger.error('NetworkService', `Parse data failed: ${err}`);
     }
   }
 
@@ -345,13 +347,13 @@ export class NetworkService {
     void this.stopBackgroundTask();
     this._state = ConnectionState.DISCONNECTED;
     this.onStateChange?.(this._state);
-    console.info('[NetworkService] Connection closed');
+    Logger.info('NetworkService', 'Connection closed');
 
     if (this.host) {
       this.autoReconnectTimer = setTimeout(() => {
-        console.info('[NetworkService] 尝试自动重连...');
+        Logger.info('NetworkService', '尝试自动重连...');
         this.connect(this.host, this.controlPort).catch((err: Error) => {
-          console.error(`[NetworkService] 自动重连失败: ${err.message}`);
+          Logger.error('NetworkService', `自动重连失败: ${err.message}`);
         });
       }, 2000);
     }
@@ -363,9 +365,9 @@ export class NetworkService {
   private async createUdpSendSocket(): Promise<void> {
     try {
       this.udpSendSocket = socket.constructUDPSocketInstance();
-      console.info('[NetworkService] UDP send socket created');
+      Logger.info('NetworkService', 'UDP send socket created');
     } catch (err) {
-      console.error(`[NetworkService] UDP send socket failed: ${err}`);
+      Logger.error('NetworkService', `UDP send socket failed: ${err}`);
       this.udpSendSocket = null;
     }
   }
@@ -374,7 +376,7 @@ export class NetworkService {
     try {
       this.udpSendSocket?.close();
     } catch (err) {
-      console.error(`[NetworkService] UDP send close error: ${err}`);
+      Logger.error('NetworkService', `UDP send close error: ${err}`);
     }
     this.udpSendSocket = null;
   }

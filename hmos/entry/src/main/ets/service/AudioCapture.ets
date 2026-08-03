@@ -9,6 +9,8 @@ import { audio } from '@kit.AudioKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { BackgroundTaskGuard } from './BackgroundTaskGuard';
+import { Logger } from './Logger';
+
 
 /**
  * 音频捕获回调类
@@ -85,13 +87,13 @@ export class AudioCapture {
       await this.audioCapturer.start();
       this.isCapturing = true;
       this.startBackgroundTask();
-      console.info('[AudioCapture] Started');
+      Logger.info('AudioCapture', 'Started');
     } catch (err) {
       // 失败路径：释放已创建的 capturer，避免泄漏
       try {
         await this.audioCapturer?.release();
       } catch (e) {
-        console.error(`[AudioCapture] Cleanup release error: ${e}`);
+        Logger.error('AudioCapture', `Cleanup release error: ${e}`);
       }
       this.audioCapturer = null;
       let errorMsg: string;
@@ -100,7 +102,7 @@ export class AudioCapture {
       } else {
         errorMsg = String(err);
       }
-      console.error(`[AudioCapture] Start failed: ${errorMsg}`);
+      Logger.error('AudioCapture', `Start failed: ${errorMsg}`);
       this.callback?.onError(`启动麦克风捕获失败: ${errorMsg}`);
     }
   }
@@ -114,21 +116,21 @@ export class AudioCapture {
       try {
         capturer.off('readData');
       } catch (err) {
-        console.error(`[AudioCapture] off error: ${err}`);
+        Logger.error('AudioCapture', `off error: ${err}`);
       }
       // stop/release 相互独立：一个失败不阻断另一个，保证资源最终释放
       try {
         await capturer.stop();
       } catch (err) {
-        console.error(`[AudioCapture] Stop error: ${err}`);
+        Logger.error('AudioCapture', `Stop error: ${err}`);
       }
       try {
         await capturer.release();
       } catch (err) {
-        console.error(`[AudioCapture] Release error: ${err}`);
+        Logger.error('AudioCapture', `Release error: ${err}`);
       }
     }
-    console.info('[AudioCapture] Stopped');
+    Logger.info('AudioCapture', 'Stopped');
   }
 
   private async startBackgroundTask(): Promise<void> {

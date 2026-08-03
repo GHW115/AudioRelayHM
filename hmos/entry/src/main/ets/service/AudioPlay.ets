@@ -13,6 +13,8 @@ import { avSession } from '@kit.AVSessionKit';
 import { EncodingType } from '../model/AudioPacket';
 import { BackgroundTaskGuard } from './BackgroundTaskGuard';
 import { nativeAudioInit, nativeAudioStart, nativeAudioStop, nativeAudioSetEncoding, nativeAudioSetBufferMs } from 'libopus_decoder.so';
+import { Logger } from './Logger';
+
 
 /**
  * 音频播放回调类
@@ -59,9 +61,9 @@ export class AudioPlay {
     try {
       nativeAudioSetBufferMs(ms);
     } catch (err) {
-      console.error(`[AudioPlay] nativeAudioSetBufferMs failed: ${err}`);
+      Logger.error('AudioPlay', `nativeAudioSetBufferMs failed: ${err}`);
     }
-    console.info(`[AudioPlay] Buffer target set to ${ms}ms`);
+    Logger.info('AudioPlay', `Buffer target set to ${ms}ms`);
   }
 
   setCallback(callback: AudioPlayCallback): void {
@@ -105,7 +107,7 @@ export class AudioPlay {
 
       this.isPlaying = true;
       this.callback?.onInfo('NAPI 原生音频管线已启动');
-      console.info('[AudioPlay] Native audio pipeline started');
+      Logger.info('AudioPlay', 'Native audio pipeline started');
     } catch (err) {
       // 失败路径清理：释放已创建的 AVSession / 后台任务 / native 管线，避免泄漏累积
       this.isPlaying = false;
@@ -114,7 +116,7 @@ export class AudioPlay {
       try {
         nativeAudioStop(); // g_ctx 为 null 时内部返回 -1，安全
       } catch (e) {
-        console.error(`[AudioPlay] Cleanup native error: ${e}`);
+        Logger.error('AudioPlay', `Cleanup native error: ${e}`);
       }
       let errorMsg: string;
       if (err instanceof Error) {
@@ -122,7 +124,7 @@ export class AudioPlay {
       } else {
         errorMsg = String(err);
       }
-      console.error(`[AudioPlay] Start failed: ${errorMsg}`);
+      Logger.error('AudioPlay', `Start failed: ${errorMsg}`);
       this.callback?.onError(`启动音频播放失败: ${errorMsg}`);
     }
   }
@@ -143,10 +145,10 @@ export class AudioPlay {
     try {
       nativeAudioStop();
     } catch (err) {
-      console.error(`[AudioPlay] Native stop error: ${err}`);
+      Logger.error('AudioPlay', `Native stop error: ${err}`);
     }
 
-    console.info('[AudioPlay] Stopped');
+    Logger.info('AudioPlay', 'Stopped');
   }
 
   // AVSession 完整流程：metadata → events → activate → playbackState
@@ -169,10 +171,10 @@ export class AudioPlay {
 
       // 2. 注册播控事件（必须在 activate 之前）
       this.avSessionObj.on('play', () => {
-        console.info('[AudioPlay] AVSession play 事件');
+        Logger.info('AudioPlay', 'AVSession play 事件');
       });
       this.avSessionObj.on('pause', () => {
-        console.info('[AudioPlay] AVSession pause 事件（忽略）');
+        Logger.info('AudioPlay', 'AVSession pause 事件（忽略）');
       });
 
       // 3. 激活会话
@@ -186,10 +188,10 @@ export class AudioPlay {
       await this.avSessionObj.setAVPlaybackState(playbackState);
 
       this.callback?.onInfo('AVSession 已激活');
-      console.info('[AudioPlay] AVSession 完整初始化完成');
+      Logger.info('AudioPlay', 'AVSession 完整初始化完成');
     } catch (err) {
       let msg = `创建 AVSession 失败: ${(err as BusinessError).code}`;
-      console.error('[AudioPlay] ' + msg);
+      Logger.error('AudioPlay', msg);
       this.callback?.onInfo(msg);
     }
   }
@@ -213,7 +215,7 @@ export class AudioPlay {
       try {
         await this.avSessionObj.destroy();
       } catch (err) {
-        console.error(`[AudioPlay] 销毁 AVSession 失败: ${err}`);
+        Logger.error('AudioPlay', `销毁 AVSession 失败: ${err}`);
       }
       this.avSessionObj = null;
     }

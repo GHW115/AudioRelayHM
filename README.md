@@ -214,6 +214,16 @@ dotnet test windows/AudioRelayWinUI.Tests/
 
 > 安全规则：手机→PC 音频**绝不会**输出到物理扬声器；选中默认设备（索引0）时播放会被强制停止。
 
+## 日志
+
+问题不复现时，两端都有自动落盘日志可翻查：
+
+- **Windows 端**：`AudioRelayWinUI.exe` 同目录 `logs/AudioRelay_yyyyMMdd.log`（5MB 轮转到 `.1`）
+- **手机端**：应用沙箱 `files/audiorelay.log`（2MB 轮转到 `.1`），USB 连接后拉取：
+  ```
+  hdc file recv /data/app/el2/100/base/com.example.audiorelayhmos/haps/entry/files/audiorelay.log .
+  ```
+
 ## 已知限制
 
 - 手机→PC 方向始终使用 PCM 编码，不支持 Opus 压缩上传（移动网络下带宽较高）

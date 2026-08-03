@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Linq;
 using System.Buffers;
+using System.IO;
 using NAudio.Wave;
 using Concentus.Structs;
 using Concentus.Enums;
@@ -423,7 +424,22 @@ public class MainForm : Form
         }
     }
 
+    // 自动落盘日志目录（exe 同级 logs/），当日文件，5MB 轮转到 .1
+    private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "logs");
+    private readonly object _logFileLock = new();
+
     private void Log(string msg) {
+        // 文件落盘：问题不复现时可按日期翻查
+        try {
+            lock (_logFileLock) {
+                Directory.CreateDirectory(LogDir);
+                var path = Path.Combine(LogDir, $"AudioRelay_{DateTime.Now:yyyyMMdd}.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 5 * 1024 * 1024)
+                    File.Move(path, path + ".1", true);
+                File.AppendAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}{Environment.NewLine}");
+            }
+        } catch { /* 日志写失败不影响主流程 */ }
+
         // BeginInvoke：不阻塞网络/音频线程；窗体销毁后静默丢弃
         if (!IsHandleCreated || Disposing) return;
         BeginInvoke(() => {

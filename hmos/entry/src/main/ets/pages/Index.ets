@@ -11,6 +11,8 @@ import { AudioPlay, AudioPlayCallback } from '../service/AudioPlay';
 import { AudioPacket, StreamDirection, ControlCommand } from '../model/AudioPacket';
 import { nativeAudioSetClockOffset, nativeAudioGetLatencyStats } from 'libopus_decoder.so';
 import router from '@ohos.router';
+import { Logger } from '../service/Logger';
+
 
 @Entry
 @Component
@@ -48,6 +50,7 @@ struct Index {
       this.audioPlay.setContext(ctx);
       this.audioCapture.setContext(ctx);
       this.networkService.setContext(ctx);
+      Logger.init(ctx); // 初始化文件日志（沙箱 audiorelay.log）
     }
     this.setupCallbacks();
     // 脉冲动画（保存句柄，页面销毁时清理，防止定时器泄漏与已销毁组件交互）
@@ -116,7 +119,7 @@ struct Index {
         let t3: number = Date.now();
         this.clockOffset = Math.floor((phoneTime + t3) / 2) - pcTime;
         nativeAudioSetClockOffset(this.clockOffset);
-        console.info(`[Index] 时钟偏差校准: ${this.clockOffset}ms`);
+        Logger.info('Index', `时钟偏差校准: ${this.clockOffset}ms`);
       }
     };
 
@@ -471,7 +474,7 @@ struct Index {
         const statsBuf: ArrayBuffer = nativeAudioGetLatencyStats();
         this.networkService.sendLatencyReport(statsBuf);
       } catch (err) {
-        console.error(`[Index] 延迟上报失败: ${err}`);
+        Logger.error('Index', `延迟上报失败: ${err}`);
       }
     }, 200); // 200ms 采样率，匹配图表刷新周期，捕获短时抖动
   }
