@@ -13,6 +13,8 @@ public class NetworkServer {
     private IPEndPoint? phoneEndPoint;
     private int seq;
     private readonly object netLock = new(); // 保护 udpSend/udpRecv/phoneEndPoint/client 跨线程访问
+    private readonly SemaphoreSlim writeSem = new(1, 1); // 保护 stream 并发写（控制回复 + 心跳保活）
+    private CancellationTokenSource? _hbCts; // 心跳保活取消源（连接生命周期）
     private int _started; // StartAsync 防重入（快速重启时旧循环未退出）
     public bool Connected => client?.Connected ?? false;
     // TCP 监听是否已成功启动（listener.Start() 成功且未被 Stop）
@@ -68,6 +70,12 @@ public class NetworkServer {
                     }
                     _ = Task.Run(() => UdpReceiveLoop(tk), tk);
 
+                // 主动心跳保活：PC→手机方向持续发送，即使手机端 ArkTS 定时器
+                // 因后台/锁屏被冻结，TCP 数据流仍保持 NAT/防火墙条目活跃，连接不断
+                _hbCts = CancellationTokenSource.CreateLinkedTokenSource(tk);
+                var hbStream = stream;
+                _ = Task.Run(() => HeartbeatLoop(hbStream, _hbCts.Token), _hbCts.Token);
+
                 OnConnected?.Invoke(true);
 
                 // TCP 只处理控制消息（音频走 UDP）
@@ -104,7 +112,7 @@ public class NetworkServer {
                                 Sequence = Interlocked.Increment(ref seq) - 1, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                                 SampleRate = 0, Channels = 0, BitsPerSample = 0, Payload = Array.Empty<byte>()
                             };
-                            if (stream != null) await stream.WriteAsync(ack.Serialize());
+                            if (stream != null) { await writeSem.WaitAsync(tk); try { await stream.WriteAsync(ack.Serialize(), tk); } finally { writeSem.Release(); } }
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.Heartbeat) {
                             // 心跳：回应 HEARTBEAT 以维持连接双向活跃
@@ -113,7 +121,7 @@ public class NetworkServer {
                                 Sequence = Interlocked.Increment(ref seq) - 1, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                                 SampleRate = 0, Channels = 0, BitsPerSample = 0, Payload = Array.Empty<byte>()
                             };
-                            if (stream != null) await stream.WriteAsync(hb.Serialize());
+                            if (stream != null) { await writeSem.WaitAsync(tk); try { await stream.WriteAsync(hb.Serialize(), tk); } finally { writeSem.Release(); } }
                         }
                         else if (pkt.MsgType == MessageType.Control && pkt.Command == ControlCommand.Config && pkt.Payload.Length >= 9) {
                             var enc = (EncodingType)pkt.Payload[0];
@@ -145,7 +153,7 @@ public class NetworkServer {
                             BitConverter.GetBytes(pcTime).CopyTo(reply, 8);
                             var ack = new AudioPacket { MsgType = MessageType.Control, Command = ControlCommand.TimeSync,
                                 Sequence = Interlocked.Increment(ref seq) - 1, Timestamp = pcTime, SampleRate = 0, Channels = 0, BitsPerSample = 0, Payload = reply };
-                            if (stream != null) await stream.WriteAsync(ack.Serialize());
+                            if (stream != null) { await writeSem.WaitAsync(tk); try { await stream.WriteAsync(ack.Serialize(), tk); } finally { writeSem.Release(); } }
                         }
                         offset += totalLen;
                     }
@@ -159,6 +167,7 @@ public class NetworkServer {
             } catch (OperationCanceledException) { break; }
             catch (Exception ex) { OnLog?.Invoke($"连接异常: {ex.Message}"); }
             finally {
+                _hbCts?.Cancel(); _hbCts?.Dispose(); _hbCts = null; // 停止主动心跳
                 OnConnected?.Invoke(false);
                 lock (netLock) {
                     try { udpRecv?.Close(); } catch { }
@@ -171,6 +180,23 @@ public class NetworkServer {
         } finally {
             Interlocked.Exchange(ref _started, 0); // 允许下次启动
         }
+    }
+
+    /// 主动心跳保活：每 2s 发送 HEARTBEAT，独立于手机端心跳（手机后台冻结定时器时仍保活）
+    private static async Task HeartbeatLoop(NetworkStream stream, CancellationToken tk) {
+        var hb = new AudioPacket {
+            MsgType = MessageType.Control, Command = ControlCommand.Heartbeat,
+            Sequence = 0, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            SampleRate = 0, Channels = 0, BitsPerSample = 0, Payload = Array.Empty<byte>()
+        };
+        var bytes = hb.Serialize();
+        try {
+            while (!tk.IsCancellationRequested) {
+                await Task.Delay(2000, tk);
+                try { await stream.WriteAsync(bytes, tk); }
+                catch (Exception) { break; } // 连接已断开，退出保活
+            }
+        } catch (OperationCanceledException) { }
     }
 
     private async Task UdpReceiveLoop(CancellationToken tk) {
