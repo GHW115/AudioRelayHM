@@ -38,6 +38,7 @@ export class NetworkService {
   private sequenceNumber: number = 0;
   private heartbeatTimer: number = -1;
   private autoReconnectTimer: number = -1;
+  private udpKeepAliveTimer: number = -1; // UDP 保活包定时器（DATA_TRANSFER 任务活动证据）
   private readonly HEADER_SIZE: number = 44;
   // 粘包解析缓冲上限：超过视为畸形/恶意数据流，直接重置（防止内存无界增长）
   private static readonly MAX_RECV_BUFFER: number = 1024 * 1024;
@@ -112,6 +113,7 @@ export class NetworkService {
 
       await this.sendHandshake();
       this.startHeartbeat();
+      this.startUdpKeepAlive(); // 定期 UDP 数据包：防止 DATA_TRANSFER 任务被系统判定"无数据传输"回收
       await this.createUdpSendSocket();
       // 连接期间启动 DATA_TRANSFER 后台任务：无音频播放时（无 AUDIO_PLAYBACK 任务）
       // 手机退后台不会被系统冻结/回收，TCP 连接得以保持
@@ -135,6 +137,7 @@ export class NetworkService {
 
   async disconnect(): Promise<void> {
     this.stopHeartbeat();
+    this.stopUdpKeepAlive();
     void this.stopBackgroundTask();
     if (this.autoReconnectTimer !== -1) {
       clearTimeout(this.autoReconnectTimer);
@@ -324,6 +327,54 @@ export class NetworkService {
   }
 
   /**
+   * UDP 保活包：每 5s 发送一个最小 AudioData 包到 PC，
+   * 作为 DATA_TRANSFER 连续任务的"实际数据传输"证据——
+   * 系统会周期性检查连续任务是否有数据收发，仅靠 TCP 控制心跳（几十字节）
+   * 会被判定无数据传输而回收任务（表现为锁屏/后台约 10 分钟后连接被断）。
+   */
+  private startUdpKeepAlive(): void {
+    this.stopUdpKeepAlive();
+    this.udpKeepAliveTimer = setInterval(() => {
+      void this.sendUdpKeepAlive();
+    }, 5000);
+  }
+
+  private stopUdpKeepAlive(): void {
+    if (this.udpKeepAliveTimer !== -1) {
+      clearInterval(this.udpKeepAliveTimer);
+      this.udpKeepAliveTimer = -1;
+    }
+  }
+
+  private async sendUdpKeepAlive(): Promise<void> {
+    if (!this.udpSendSocket || !this.host || this._state !== ConnectionState.CONNECTED) {
+      return;
+    }
+    try {
+      const packet = new AudioPacket();
+      packet.msgType = MessageType.AUDIO_DATA;
+      packet.direction = StreamDirection.PHONE_TO_PC;
+      packet.encodingType = EncodingType.PCM;
+      packet.sequence = this.sequenceNumber++;
+      packet.timestamp = Date.now();
+      packet.sampleRate = 48000;
+      packet.channels = 2;
+      packet.bitsPerSample = 16;
+      packet.payload = new ArrayBuffer(0); // 空负载：PC 端 WriteData(空) 无副作用
+      const opts: socket.UDPSendOptions = {
+        data: packet.serialize(),
+        address: {
+          address: this.host,
+          port: this.udpPort,
+        },
+      };
+      await this.udpSendSocket.send(opts);
+    } catch (err) {
+      Logger.warn('NetworkService', `UDP keepalive failed: ${JSON.stringify(err)}`);
+    }
+  }
+
+  /**
    * 后台保活任务（引用计数，与播放/录音任务共享）：连接期间持续运行，
    * 防止无音频播放时进程退后台被系统冻结/回收导致 TCP 断开
    */
@@ -343,6 +394,7 @@ export class NetworkService {
       return;
     }
     this.stopHeartbeat();
+    this.stopUdpKeepAlive();
     this.closeUdpSendSocket();
     void this.stopBackgroundTask();
     this._state = ConnectionState.DISCONNECTED;
