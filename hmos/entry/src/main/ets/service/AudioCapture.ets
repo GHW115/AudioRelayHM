@@ -7,8 +7,8 @@
 
 import { audio } from '@kit.AudioKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
-import { wantAgent, WantAgent } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { BackgroundTaskGuard } from './BackgroundTaskGuard';
 
 /**
  * 音频捕获回调类
@@ -135,38 +135,11 @@ export class AudioCapture {
     if (!this.context) {
       return;
     }
-    try {
-      let wantAgentInfo: wantAgent.WantAgentInfo = {
-        wants: [
-          {
-            bundleName: this.context.applicationInfo.name,
-            abilityName: 'EntryAbility',
-          }
-        ],
-        actionType: wantAgent.OperationType.START_ABILITY,
-        requestCode: 0,
-        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
-      };
-      let wantAgentObj: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
-      await backgroundTaskManager.startBackgroundRunning(
-        this.context,
-        backgroundTaskManager.BackgroundMode.AUDIO_RECORDING,
-        wantAgentObj
-      );
-      console.info('[AudioCapture] 后台录音任务已启动');
-    } catch (err) {
-      let error = err as BusinessError;
-      console.error(`[AudioCapture] 后台任务失败: code=${error.code}, message=${error.message}`);
-    }
+    // 引用计数共享任务（与连接保活/播放共用）
+    await BackgroundTaskGuard.acquire(this.context);
   }
 
   private async stopBackgroundTask(): Promise<void> {
-    if (this.context) {
-      try {
-        await backgroundTaskManager.stopBackgroundRunning(this.context);
-      } catch (err) {
-        console.error(`[AudioCapture] 停止后台任务失败: ${err}`);
-      }
-    }
+    await BackgroundTaskGuard.release();
   }
 }

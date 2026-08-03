@@ -8,11 +8,10 @@
 // AVSession + 后台任务保留在 ArkTS 层
 
 import { audio } from '@kit.AudioKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
-import { wantAgent, WantAgent } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { avSession } from '@kit.AVSessionKit';
 import { EncodingType } from '../model/AudioPacket';
+import { BackgroundTaskGuard } from './BackgroundTaskGuard';
 import { nativeAudioInit, nativeAudioStart, nativeAudioStop, nativeAudioSetEncoding, nativeAudioSetBufferMs } from 'libopus_decoder.so';
 
 /**
@@ -200,42 +199,13 @@ export class AudioPlay {
       this.callback?.onInfo('未设置 context，无法启动后台任务');
       return;
     }
-    try {
-      let wantAgentInfo: wantAgent.WantAgentInfo = {
-        wants: [
-          {
-            bundleName: this.context.applicationInfo.name,
-            abilityName: 'EntryAbility',
-          }
-        ],
-        actionType: wantAgent.OperationType.START_ABILITY,
-        requestCode: 0,
-        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
-      };
-      let wantAgentObj: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
-      await backgroundTaskManager.startBackgroundRunning(
-        this.context,
-        backgroundTaskManager.BackgroundMode.AUDIO_PLAYBACK,
-        wantAgentObj
-      );
-      this.callback?.onInfo('后台长时任务已启动');
-      console.info('[AudioPlay] 后台任务已启动');
-    } catch (err) {
-      let error = err as BusinessError;
-      let msg = `后台任务失败: code=${error.code}, message=${error.message}`;
-      console.error('[AudioPlay] ' + msg);
-      this.callback?.onInfo(msg);
-    }
+    // 引用计数共享任务（与连接保活/录音共用），避免 stopBackgroundRunning 连带停掉其他保活
+    const ok: boolean = await BackgroundTaskGuard.acquire(this.context);
+    this.callback?.onInfo(ok ? '后台长时任务已启动' : '后台任务启动失败');
   }
 
   private async stopBackgroundTask(): Promise<void> {
-    if (this.context) {
-      try {
-        await backgroundTaskManager.stopBackgroundRunning(this.context);
-      } catch (err) {
-        console.error(`[AudioPlay] 停止后台任务失败: ${err}`);
-      }
-    }
+    await BackgroundTaskGuard.release();
   }
 
   private async destroyAVSession(): Promise<void> {

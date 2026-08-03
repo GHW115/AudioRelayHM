@@ -11,8 +11,7 @@ import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { AudioPacket, MessageType, ControlCommand, StreamDirection, EncodingType } from '../model/AudioPacket';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { wantAgent, WantAgent } from '@kit.AbilityKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { BackgroundTaskGuard } from './BackgroundTaskGuard';
 
 /**
  * 网络连接状态
@@ -50,7 +49,6 @@ export class NetworkService {
   onError?: (error: string) => void;
 
   private context: Context | null = null;
-  private backgroundTaskRunning: boolean = false;
 
   /**
    * 注入 Context（用于后台保活任务）
@@ -324,50 +322,18 @@ export class NetworkService {
   }
 
   /**
-   * 后台保活任务（DATA_TRANSFER 长时任务）：连接期间持续运行，
+   * 后台保活任务（引用计数，与播放/录音任务共享）：连接期间持续运行，
    * 防止无音频播放时进程退后台被系统冻结/回收导致 TCP 断开
    */
   private async startBackgroundTask(): Promise<void> {
-    if (this.backgroundTaskRunning || !this.context) {
+    if (!this.context) {
       return;
     }
-    try {
-      let wantAgentInfo: wantAgent.WantAgentInfo = {
-        wants: [
-          {
-            bundleName: this.context.applicationInfo.name,
-            abilityName: 'EntryAbility',
-          }
-        ],
-        actionType: wantAgent.OperationType.START_ABILITY,
-        requestCode: 0,
-        wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
-      };
-      let wantAgentObj: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
-      await backgroundTaskManager.startBackgroundRunning(
-        this.context,
-        backgroundTaskManager.BackgroundMode.DATA_TRANSFER,
-        wantAgentObj
-      );
-      this.backgroundTaskRunning = true;
-      console.info('[NetworkService] DATA_TRANSFER 后台保活任务已启动');
-    } catch (err) {
-      let error = err as BusinessError;
-      console.error(`[NetworkService] 后台保活任务启动失败: code=${error.code}, ${error.message}`);
-    }
+    await BackgroundTaskGuard.acquire(this.context);
   }
 
   private async stopBackgroundTask(): Promise<void> {
-    if (!this.backgroundTaskRunning || !this.context) {
-      return;
-    }
-    try {
-      await backgroundTaskManager.stopBackgroundRunning(this.context);
-      this.backgroundTaskRunning = false;
-      console.info('[NetworkService] 后台保活任务已停止');
-    } catch (err) {
-      console.error(`[NetworkService] 停止后台保活任务失败: ${err}`);
-    }
+    await BackgroundTaskGuard.release();
   }
 
   private handleDisconnect(): void {
