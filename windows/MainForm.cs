@@ -119,7 +119,7 @@ public class MainForm : Form
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
         topBar.BackColor = UiTheme.Background; // 与窗体背景同色，融为一体
-        var logoBox = new PictureBox { Image = MakeRoundedImage(appIcon.ToBitmap(), 34, 8),
+        var logoBox = new PictureBox { Image = appIcon.ToBitmap(),
             SizeMode = PictureBoxSizeMode.Zoom, BackColor = UiTheme.Background,
             Location = new Point(20, 9), Size = new Size(34, 34) };
         var lblTitle = new Label { Text = "AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
@@ -367,24 +367,6 @@ public class MainForm : Form
         logCard.Height = h;
         txtLog.Height = h - 38;
         if (txtLog.Height < 40) txtLog.Height = 40;
-    }
-
-    // 生成圆角图片（用于导航栏 logo：圆角外填充背景色，视觉无缝）
-    private static Image MakeRoundedImage(Image src, int size, int radius) {
-        var bmp = new Bitmap(size, size);
-        using var g = Graphics.FromImage(bmp);
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        using (var bg = new SolidBrush(UiTheme.Background))
-            g.FillRectangle(bg, 0, 0, size, size);
-        using var path = new System.Drawing.Drawing2D.GraphicsPath();
-        path.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
-        path.AddArc(size - radius * 2 - 1, 0, radius * 2, radius * 2, 270, 90);
-        path.AddArc(size - radius * 2 - 1, size - radius * 2 - 1, radius * 2, radius * 2, 0, 90);
-        path.AddArc(0, size - radius * 2 - 1, radius * 2, radius * 2, 90, 90);
-        path.CloseFigure();
-        g.SetClip(path);
-        g.DrawImage(src, 0, 0, size, size);
-        return bmp;
     }
 
     private void SwitchPage(int index) {
