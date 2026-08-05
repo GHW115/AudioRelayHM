@@ -50,6 +50,9 @@ public class MainForm : Form
     private FlatButton btnNavServer = new();
     private FlatButton btnNavPlayer = new();
     private FlatButton btnNavSettings = new();
+    private WinButton btnMin = new();
+    private WinButton btnMax = new();
+    private WinButton btnClose = new();
 
     // === 服务器页控件 ===
     private Label lblStatusDot = new();
@@ -119,9 +122,11 @@ public class MainForm : Form
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
         topBar.BackColor = UiTheme.Background; // 与窗体背景同色，融为一体
-        var logoBox = new PictureBox { Image = appIcon.ToBitmap(),
-            SizeMode = PictureBoxSizeMode.Zoom, BackColor = UiTheme.Background,
-            Location = new Point(20, 9), Size = new Size(34, 34) };
+        var logoBox = new PictureBox();
+        using (var icon64 = new Icon(appIcon, 64, 64)) // 64px 帧缩小显示，比放大 32px 帧更锐利
+            logoBox.Image = icon64.ToBitmap();
+        logoBox.SizeMode = PictureBoxSizeMode.Zoom; logoBox.BackColor = UiTheme.Background;
+        logoBox.Location = new Point(20, 9); logoBox.Size = new Size(34, 34);
         var lblTitle = new Label { Text = "AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
             ForeColor = UiTheme.Primary, Location = new Point(60, 14), AutoSize = true };
         topBar.Controls.AddRange([logoBox, lblTitle]);
@@ -137,15 +142,15 @@ public class MainForm : Form
         btnNavServer.Click += (s, e) => SwitchPage(0);
         btnNavPlayer.Click += (s, e) => SwitchPage(1);
         btnNavSettings.Click += (s, e) => SwitchPage(2);
-        // 窗口控制按钮：Dock=Right 贴右缘，随窗口宽度自适应（不被遮挡）
-        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Dock = DockStyle.Right, Width = 40 };
-        var btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Dock = DockStyle.Right, Width = 40 };
-        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Dock = DockStyle.Right, Width = 40 };
+        // 窗口控制按钮：手动定位贴右缘（Dock 顺序不可靠），Resize 时更新
+        btnClose = new WinButton { Type = WinButton.BtnType.Close, Size = new Size(40, 32) };
+        btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Size = new Size(40, 32) };
+        btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Size = new Size(40, 32) };
         btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
         btnMax.Click += (s, e) => this.WindowState = this.WindowState == FormWindowState.Maximized
             ? FormWindowState.Normal : FormWindowState.Maximized;
         btnClose.Click += (s, e) => { _isExiting = true; Application.Exit(); };
-        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnClose, btnMax, btnMin]);
+        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnMax, btnClose]);
         // 顶栏空白区拖拽移动窗口；双击最大化/还原
         topBar.MouseDown += (s, e) => {
             ReleaseCapture();
@@ -170,9 +175,11 @@ public class MainForm : Form
         this.Resize += (s, e) => {
             contentPanel.Size = new Size(ClientSize.Width, ClientSize.Height - 52);
             LayoutNavButtons();
+            LayoutWindowButtons();
             LayoutLogArea();
         };
         LayoutNavButtons();
+        LayoutWindowButtons();
         SwitchPage(0);
 
         // === 事件注册 ===
@@ -349,6 +356,14 @@ public class MainForm : Form
             Location = new Point(16, 16), AutoSize = true };
         aboutCard.Controls.Add(lblAbout);
         pnlSettings.Controls.AddRange([srvCard, audCard, outCard, aboutCard]);
+    }
+
+    // 窗口控制按钮：从右到左 = 关闭、最大化、最小化（Windows 标准）
+    private void LayoutWindowButtons() {
+        int w = topBar.Width;
+        btnClose.Location = new Point(w - 40, 10);
+        btnMax.Location = new Point(w - 80, 10);
+        btnMin.Location = new Point(w - 120, 10);
     }
 
     // 顶部导航按钮组：随窗口宽度水平居中（避免与右侧窗口按钮重叠）
