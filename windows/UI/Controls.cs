@@ -30,6 +30,7 @@ public static class UiTheme {
 public class FlatButton : Button {
     public int CornerRadius { get; set; } = 8;
     public Color BorderColor { get; set; } = Color.Transparent; // 非透明时绘制 1px 圆角描边（线性按钮）
+    public bool IndicatorVisible { get; set; }                  // 选中时绘制蓝色底部指示条
     private bool _hover;
     private bool _pressed;
     public FlatButton() {
@@ -64,6 +65,13 @@ public class FlatButton : Button {
         }
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, ForeColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        // 底部选中指示条（3px 蓝色横条，居中）
+        if (IndicatorVisible) {
+            int iw = Math.Min(32, Width - 16);
+            int ix = (Width - iw) / 2;
+            using var indBrush = new SolidBrush(UiTheme.Primary);
+            g.FillRectangle(indBrush, ix, Height - 4, iw, 3);
+        }
     }
     internal static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle bounds, int radius) {
         var path = new System.Drawing.Drawing2D.GraphicsPath();
@@ -80,12 +88,18 @@ public class FlatButton : Button {
 // 圆角面板
 public class RoundedPanel : Panel {
     public int CornerRadius { get; set; } = 12;
+    public Color? AccentColor { get; set; }                      // 左侧强调色竖条（null=不绘制）
     public RoundedPanel() { SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer, true); BackColor = UiTheme.Card; }
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using var path = FlatButton.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), CornerRadius);
         using var brush = new SolidBrush(BackColor); g.FillPath(brush, path);
         using var pen = new Pen(UiTheme.Border, 1); g.DrawPath(pen, path);
+        // 左侧强调色竖条（3px 宽，上下各留 12px 内边距）
+        if (AccentColor.HasValue) {
+            using var accentBrush = new SolidBrush(AccentColor.Value);
+            g.FillRectangle(accentBrush, 0, 12, 3, Height - 24);
+        }
     }
 }
 
@@ -196,9 +210,24 @@ public class LatencyChartPanel : Panel
         }
 
         if (snapCount < 2) {
-            using var nf = new Font("Microsoft YaHei UI", 9);
-            using var nb = new SolidBrush(Color.FromArgb(150, 100, 116, 139));
-            g.DrawString("等待数据...", nf, nb, w / 2 - 30, h / 2 - 8);
+            // 空状态：图标 + 标题 + 引导文案
+            using var iconFont = new Font("Segoe UI", 18);
+            using var titleFont = new Font("Microsoft YaHei UI", 10, FontStyle.Bold);
+            using var descFont = new Font("Microsoft YaHei UI", 8.5f);
+            using var iconBrush = new SolidBrush(Color.FromArgb(80, 100, 116, 139));
+            using var titleBrush = new SolidBrush(Color.FromArgb(160, 100, 116, 139));
+            using var descBrush = new SolidBrush(Color.FromArgb(120, 148, 163, 184));
+            string icon = "◉";
+            string title = "等待数据";
+            string desc = "连接手机后显示实时延迟曲线";
+            var iconSize = g.MeasureString(icon, iconFont);
+            var titleSize = g.MeasureString(title, titleFont);
+            var descSize = g.MeasureString(desc, descFont);
+            float cx = w / 2f;
+            float cy = h / 2f;
+            g.DrawString(icon, iconFont, iconBrush, cx - iconSize.Width / 2, cy - iconSize.Height - 6);
+            g.DrawString(title, titleFont, titleBrush, cx - titleSize.Width / 2, cy + 2);
+            g.DrawString(desc, descFont, descBrush, cx - descSize.Width / 2, cy + 20);
             return;
         }
 
@@ -310,11 +339,12 @@ public class LatencyChartPanel : Panel
     }
 }
 
-// ======================== 顶栏窗口控制按钮 ========================
-// 最小化/关闭按钮（自绘符号 + hover 反馈），嵌入顶部导航栏
+// ======================== 顶栏窗口控制按钮（Windows 11 风格） ========================
+// 最小化/最大化还原/关闭按钮（自绘细线图标 + hover 反馈），嵌入顶部导航栏
 public class WinButton : Control {
     public enum BtnType { Minimize, Maximize, Close }
     public BtnType Type { get; set; } = BtnType.Minimize;
+    public bool IsMaximized { get; set; }                       // Maximize 类型时控制图标切换
     private bool _hover;
 
     public WinButton() {
@@ -326,19 +356,43 @@ public class WinButton : Control {
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        var fill = _hover ? (Type == BtnType.Close ? UiTheme.Danger : UiTheme.Hover) : Color.Transparent;
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+
+        // 背景：hover 时填充
+        var fill = _hover
+            ? (Type == BtnType.Close ? UiTheme.Danger : Color.FromArgb(243, 243, 243))
+            : Color.Transparent;
         using (var b = new SolidBrush(fill)) g.FillRectangle(b, 0, 0, Width, Height);
-        var penColor = _hover ? (Type == BtnType.Close ? Color.White : UiTheme.TextPrimary)
-                              : Color.FromArgb(148, 163, 184);
-        using var pen = new Pen(penColor, 1.4f);
+
+        // 图标颜色
+        var penColor = _hover
+            ? (Type == BtnType.Close ? Color.White : UiTheme.TextPrimary)
+            : Color.FromArgb(148, 163, 184);
+
+        using var pen = new Pen(penColor, 1.0f);
         int cx = Width / 2;
+        int cy = Height / 2;
+
         if (Type == BtnType.Minimize) {
-            g.DrawLine(pen, cx - 5, Height / 2, cx + 5, Height / 2);
+            // —  水平短线（居中）
+            g.DrawLine(pen, cx - 6, cy, cx + 6, cy);
         } else if (Type == BtnType.Maximize) {
-            g.DrawRectangle(pen, cx - 5, Height / 2 - 5, 10, 10);
+            if (!IsMaximized) {
+                // □  单个方框（最大化状态）
+                g.DrawRectangle(pen, cx - 5, cy - 5, 10, 10);
+            } else {
+                // 两个重叠方框（还原状态，Windows 11 风格）
+                // 后方方框（右上偏移）
+                g.DrawRectangle(pen, cx - 2, cy - 6, 9, 9);
+                // 前方方框（左下）
+                using var bg = new SolidBrush(fill == Color.Transparent ? Parent?.BackColor ?? Color.White : fill);
+                g.FillRectangle(bg, cx - 6, cy - 1, 10, 7);   // 遮挡后方方框的左下部分
+                g.DrawRectangle(pen, cx - 6, cy - 1, 10, 7);
+            }
         } else {
-            g.DrawLine(pen, cx - 5, Height / 2 - 5, cx + 5, Height / 2 + 5);
-            g.DrawLine(pen, cx + 5, Height / 2 - 5, cx - 5, Height / 2 + 5);
+            // ×  关闭叉号
+            g.DrawLine(pen, cx - 5, cy - 5, cx + 5, cy + 5);
+            g.DrawLine(pen, cx + 5, cy - 5, cx - 5, cy + 5);
         }
     }
 

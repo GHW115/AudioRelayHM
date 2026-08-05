@@ -144,11 +144,14 @@ public class MainForm : Form
         btnNavSettings.Click += (s, e) => SwitchPage(2);
         // 窗口控制按钮：手动定位贴右缘（Dock 顺序不可靠），Resize 时更新
         btnClose = new WinButton { Type = WinButton.BtnType.Close, Size = new Size(40, 32) };
-        btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Size = new Size(40, 32) };
-        btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Size = new Size(40, 32) };
+        btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Size = new Size(46, 32) };
+        btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Size = new Size(46, 32) };
         btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
-        btnMax.Click += (s, e) => this.WindowState = this.WindowState == FormWindowState.Maximized
-            ? FormWindowState.Normal : FormWindowState.Maximized;
+        btnMax.Click += (s, e) => {
+            bool toMax = this.WindowState != FormWindowState.Maximized;
+            this.WindowState = toMax ? FormWindowState.Maximized : FormWindowState.Normal;
+            btnMax.IsMaximized = toMax; btnMax.Invalidate();
+        };
         btnClose.Click += (s, e) => { _isExiting = true; Application.Exit(); };
         topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnMax, btnClose]);
         // 顶栏空白区拖拽移动窗口；双击最大化/还原
@@ -156,9 +159,11 @@ public class MainForm : Form
             ReleaseCapture();
             SendMessage(this.Handle, WM_NCLBUTTONDOWN, new IntPtr(HTCAPTION), IntPtr.Zero);
         };
-        topBar.MouseDoubleClick += (s, e) =>
-            this.WindowState = this.WindowState == FormWindowState.Maximized
-                ? FormWindowState.Normal : FormWindowState.Maximized;
+        topBar.MouseDoubleClick += (s, e) => {
+            bool toMax = this.WindowState != FormWindowState.Maximized;
+            this.WindowState = toMax ? FormWindowState.Maximized : FormWindowState.Normal;
+            btnMax.IsMaximized = toMax; btnMax.Invalidate();
+        };
         var topSep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = UiTheme.Border };
         topBar.Controls.Add(topSep);
 
@@ -226,7 +231,9 @@ public class MainForm : Form
                 lblEncoding.Text = $"编码: {enc}";
                 lblBitrate.Text = $"码率: {bitrate} kbps";
                 lblBuffer.Text = $"缓冲: {bufferMs} ms";
-                lblCaptureInfo.Text = $"{enc} {bitrate}kbps";
+                lblCaptureInfo.Text = enc == EncodingType.Pcm
+                    ? "PCM · 48kHz · 2ch"
+                    : $"{enc} {bitrate}kbps · 48kHz · 2ch";
                 Log($"配置已更新: {enc} {bitrate}kbps, 缓冲 {bufferMs}ms");
             });
         };
@@ -246,7 +253,7 @@ public class MainForm : Form
             Location = new Point(616, 15), Size = new Size(124, 34) };
         banner.Controls.AddRange([lblStatusDot, lblStatusText, btnStartStop]);
         // 双栏：设备信息 | 音频捕获
-        var devCard = new RoundedPanel { Location = new Point(0, 92), Size = new Size(370, 76) };
+        var devCard = new RoundedPanel { Location = new Point(0, 92), Size = new Size(370, 76), AccentColor = UiTheme.Primary };
         string hostname = "Unknown"; string localIp = "0.0.0.0";
         try { hostname = Dns.GetHostName();
             var ips = Dns.GetHostAddresses(Dns.GetHostName());
@@ -257,10 +264,10 @@ public class MainForm : Form
         lblIpAddr = new Label { Text = localIp, Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 42), AutoSize = true };
         devCard.Controls.AddRange([lblHost, lblIpAddr]);
-        var capCard = new RoundedPanel { Location = new Point(390, 92), Size = new Size(370, 76) };
+        var capCard = new RoundedPanel { Location = new Point(390, 92), Size = new Size(370, 76), AccentColor = UiTheme.Success };
         var lblCapTitle = new Label { Text = "音频捕获", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 10), AutoSize = true };
-        lblCaptureInfo = new Label { Text = "Opus 64kbps · 48kHz · 2ch", Font = UiTheme.Font(11, FontStyle.Bold),
+        lblCaptureInfo = new Label { Text = "PCM 0kbps · 48kHz · 2ch", Font = UiTheme.Font(11, FontStyle.Bold),
             ForeColor = UiTheme.TextPrimary, Location = new Point(16, 32), AutoSize = true };
         capCard.Controls.AddRange([lblCapTitle, lblCaptureInfo]);
         // 延迟大图（音频工具核心视觉）
@@ -321,7 +328,7 @@ public class MainForm : Form
             BackColor = UiTheme.InputBg };
         txtPortServer = txtPortSettings;
         srvCard.Controls.AddRange([lblPort, txtPortSettings]);
-        var audCard = new RoundedPanel { Location = new Point(390, 0), Size = new Size(370, 140) };
+        var audCard = new RoundedPanel { Location = new Point(390, 0), Size = new Size(370, 156) };
         var lblAudTitle = new Label { Text = "音频设置", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
         var lblEnc = new Label { Text = "编码方式", Font = UiTheme.Font(10),
@@ -333,8 +340,8 @@ public class MainForm : Form
         cboBitrate = new ComboBox { Location = new Point(120, 73), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = UiTheme.InputBg };
         cboBitrate.Items.AddRange(["32 kbps", "64 kbps", "128 kbps", "192 kbps"]); cboBitrate.SelectedIndex = 1;
         var lblBuf = new Label { Text = "缓冲时间", Font = UiTheme.Font(10),
-            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 116), AutoSize = true };
-        cboBuffer = new ComboBox { Location = new Point(120, 113), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = UiTheme.InputBg };
+            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 126), AutoSize = true };
+        cboBuffer = new ComboBox { Location = new Point(120, 123), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = UiTheme.InputBg };
         cboBuffer.Items.AddRange(["0 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1000 ms"]); cboBuffer.SelectedIndex = 0;
         // 本地默认配置：变更立即生效（手机端 CONFIG 下发时会被覆盖，符合"手机端主控"设计）
         cboEncoding.SelectedIndexChanged += OnLocalConfigChanged;
@@ -342,7 +349,7 @@ public class MainForm : Form
         cboBuffer.SelectedIndexChanged += OnLocalConfigChanged;
         audCard.Controls.AddRange([lblAudTitle, lblEnc, cboEncoding, lblBr, cboBitrate, lblBuf, cboBuffer]);
         // 输出设备全宽
-        var outCard = new RoundedPanel { Location = new Point(0, 148), Size = new Size(760, 64) };
+        var outCard = new RoundedPanel { Location = new Point(0, 164), Size = new Size(760, 64) };
         var lblDev = new Label { Text = "输出设备", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
         cboOutputDevice = new ComboBox { Location = new Point(16, 32), Width = 560, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = UiTheme.InputBg };
@@ -350,7 +357,7 @@ public class MainForm : Form
         cboOutputDevice.SelectedIndexChanged += OnOutputDeviceChanged;
         outCard.Controls.AddRange([lblDev, cboOutputDevice]);
         // 关于
-        var aboutCard = new RoundedPanel { Location = new Point(0, 220), Size = new Size(760, 50) };
+        var aboutCard = new RoundedPanel { Location = new Point(0, 236), Size = new Size(760, 50) };
         var lblAbout = new Label { Text = "AudioRelay v1.0 — 鸿蒙 ↔ Windows 音频串流",
             Font = UiTheme.Font(10), ForeColor = UiTheme.TextSecondary,
             Location = new Point(16, 16), AutoSize = true };
@@ -359,17 +366,19 @@ public class MainForm : Form
     }
 
     // 窗口控制按钮：从右到左 = 关闭、最大化、最小化（Windows 标准）
+    // 使用负坐标锚定到窗口绝对右边缘，避免 DWM 渲染偏差导致的间隙
     private void LayoutWindowButtons() {
-        int w = topBar.Width;
-        btnClose.Location = new Point(w - 40, 10);
-        btnMax.Location = new Point(w - 80, 10);
-        btnMin.Location = new Point(w - 120, 10);
+        btnClose.Location = new Point(this.ClientSize.Width - 46, 0);
+        btnMax.Location = new Point(this.ClientSize.Width - 92, 0);
+        btnMin.Location = new Point(this.ClientSize.Width - 138, 0);
     }
 
     // 顶部导航按钮组：随窗口宽度水平居中（避免与右侧窗口按钮重叠）
     private void LayoutNavButtons() {
-        int totalW = 80 * 3; // 三个 80px 导航按钮
-        int x = Math.Max(0, (topBar.Width - totalW) / 2);
+        int totalW = 80 * 3;               // 三个 80px 导航按钮
+        int winBtnSpace = 46 * 3;           // 窗口控制按钮占用 138px
+        int availW = topBar.Width - winBtnSpace;
+        int x = Math.Max(0, (availW - totalW) / 2);
         btnNavServer.Location = new Point(x, 9);
         btnNavPlayer.Location = new Point(x + 80, 9);
         btnNavSettings.Location = new Point(x + 160, 9);
@@ -378,10 +387,10 @@ public class MainForm : Form
     // 日志区高度跟随窗口高度（内容区变矮时压缩日志，避免被裁）
     private void LayoutLogArea() {
         int h = pnlServer.Height - 368;
-        if (h < 60) h = 60;
+        if (h < 100) h = 100;
         logCard.Height = h;
         txtLog.Height = h - 38;
-        if (txtLog.Height < 40) txtLog.Height = 40;
+        if (txtLog.Height < 60) txtLog.Height = 60;
     }
 
     private void SwitchPage(int index) {
@@ -393,10 +402,12 @@ public class MainForm : Form
         ApplyNavStyle(btnNavSettings, index == 2);
     }
 
-    // 顶部导航按钮样式：选中=浅蓝底+主蓝字，未选=白底+灰字
+    // 顶部导航按钮样式：选中=浅蓝底+主蓝字+底部指示条，未选=白底+灰字
     private static void ApplyNavStyle(FlatButton b, bool selected) {
         b.BackColor = selected ? UiTheme.PrimaryLight : Color.White;
         b.ForeColor = selected ? UiTheme.Primary : UiTheme.TextSecondary;
+        b.IndicatorVisible = selected;
+        b.Invalidate();
     }
 
     private async void OnFormShown(object? sender, EventArgs e) {
@@ -435,7 +446,6 @@ public class MainForm : Form
             txtPortSettings.ReadOnly = false;
             lblStatusDot.ForeColor = UiTheme.Danger;
             lblStatusText.Text = "已停止"; lblStatusText.ForeColor = UiTheme.Danger;
-            capture.Stop();
             Log("服务已停止"); return;
         }
         await StartServer();
@@ -472,7 +482,9 @@ public class MainForm : Form
         playback.BufferDurationMs = bufferMs;
         if (playback.IsPlaying) playback.RestartWithNewBuffer();
 
-        lblCaptureInfo.Text = $"{enc} {bitrate}kbps";
+        lblCaptureInfo.Text = enc == EncodingType.Pcm
+            ? "PCM · 48kHz · 2ch"
+            : $"{enc} {bitrate}kbps · 48kHz · 2ch";
         Log($"本地配置已应用: {enc} {bitrate}kbps, 缓冲 {bufferMs}ms");
     }
 
@@ -548,6 +560,9 @@ public class MainForm : Form
 
     protected override void OnResize(EventArgs e) {
         base.OnResize(e);
+        // 同步最大化按钮图标状态（覆盖 Win+Up 等非按钮触发的窗口状态变化）
+        bool isMax = this.WindowState == FormWindowState.Maximized;
+        if (btnMax.IsMaximized != isMax) { btnMax.IsMaximized = isMax; btnMax.Invalidate(); }
         if (this.WindowState == FormWindowState.Minimized) {
             this.Hide();
         }
