@@ -116,7 +116,7 @@ public class MainForm : Form
         navPanel.Dock = DockStyle.Left;
         navPanel.Width = 160;
         navPanel.BackColor = Color.White;
-        var lblTitle = new Label { Text = "AudioRelay", Font = new Font("Microsoft YaHei UI", 15, FontStyle.Bold),
+        var lblTitle = new Label { Text = "♬ AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
             ForeColor = UiTheme.Primary, Location = new Point(16, 20), AutoSize = true };
         navPanel.Controls.Add(lblTitle);
         btnNavServer.Location = new Point(0, 70); btnNavServer.Size = new Size(160, 44);
@@ -126,10 +126,13 @@ public class MainForm : Form
         btnNavPlayer.Click += (s, e) => SwitchPage(1);
         btnNavSettings.Click += (s, e) => SwitchPage(2);
         navPanel.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings]);
+        // 侧边栏右缘 1px 分隔线（提升浅灰/白边界可识别性）
+        var navSep = new Panel { Dock = DockStyle.Right, Width = 1, BackColor = UiTheme.Border };
+        navPanel.Controls.Add(navSep);
 
         // === 右侧内容区 ===
         contentPanel.Dock = DockStyle.Fill;
-        contentPanel.Padding = new Padding(20, 16, 20, 16);
+        contentPanel.Padding = new Padding(20, 20, 20, 16);
         pnlServer.Dock = DockStyle.Fill; pnlPlayer.Dock = DockStyle.Fill; pnlSettings.Dock = DockStyle.Fill;
         BuildServerPage(); BuildPlayerPage(); BuildSettingsPage();
         contentPanel.Controls.AddRange([pnlSettings, pnlPlayer, pnlServer]);
@@ -190,56 +193,65 @@ public class MainForm : Form
     }
 
     private void BuildServerPage() {
-        var lblTitle = new Label { Text = "服务器", Font = UiTheme.Font(18, FontStyle.Bold),
+        // 页面标题（主层级，20px）+ 分隔线强化区块起点
+        var lblTitle = new Label { Text = "服务器", Font = UiTheme.Font(20, FontStyle.Bold),
             ForeColor = UiTheme.TextPrimary, Location = new Point(0, 0), AutoSize = true };
+        var titleSep = new Panel { BackColor = UiTheme.Border, Location = new Point(0, 36), Size = new Size(580, 1) };
         // 状态卡片
-        var statusCard = new RoundedPanel { Location = new Point(0, 44), Size = new Size(580, 56) };
-        lblStatusDot = new Label { Text = "●", Font = new Font("Segoe UI", 14),
-            ForeColor = UiTheme.Danger, Location = new Point(16, 14), AutoSize = true };
-        lblStatusText = new Label { Text = "未启动", Font = UiTheme.Font(11),
-            ForeColor = UiTheme.Danger, Location = new Point(40, 18), AutoSize = true };
+        var statusCard = new RoundedPanel { Location = new Point(0, 48), Size = new Size(580, 56) };
+        lblStatusDot = new Label { Text = "●", Font = new Font("Segoe UI", 12),
+            ForeColor = UiTheme.Danger, Location = new Point(16, 15), AutoSize = true };
+        lblStatusText = new Label { Text = "未启动", Font = UiTheme.Font(12, FontStyle.Bold),
+            ForeColor = UiTheme.Danger, Location = new Point(38, 18), AutoSize = true };
         btnStartStop = new FlatButton { Text = "▶ 启动服务",
-            BackColor = UiTheme.Primary, ForeColor = Color.White,
+            BackColor = UiTheme.InputBg, ForeColor = UiTheme.Adjust(UiTheme.Danger, 0.85f),
+            BorderColor = UiTheme.Adjust(UiTheme.Danger, 0.85f),
             Location = new Point(440, 11), Size = new Size(124, 34) };
         statusCard.Controls.AddRange([lblStatusDot, lblStatusText, btnStartStop]);
         // 设备信息卡片
-        var devCard = new RoundedPanel { Location = new Point(0, 112), Size = new Size(580, 72) };
+        var devCard = new RoundedPanel { Location = new Point(0, 116), Size = new Size(580, 72) };
         string hostname = "Unknown"; string localIp = "0.0.0.0";
         try { hostname = Dns.GetHostName();
             var ips = Dns.GetHostAddresses(Dns.GetHostName());
             localIp = ips.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)?.ToString() ?? "0.0.0.0";
         } catch { }
         var lblHost = new Label { Text = hostname, Font = UiTheme.Font(12, FontStyle.Bold),
-            ForeColor = UiTheme.TextPrimary, Location = new Point(16, 12), AutoSize = true };
+            ForeColor = UiTheme.TextPrimary, Location = new Point(16, 14), AutoSize = true };
         lblIpAddr = new Label { Text = localIp, Font = UiTheme.Font(10),
-            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 40), AutoSize = true };
+            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 42), AutoSize = true };
         devCard.Controls.AddRange([lblHost, lblIpAddr]);
         // 音频捕获卡片
-        var capCard = new RoundedPanel { Location = new Point(0, 196), Size = new Size(580, 56) };
+        var capCard = new RoundedPanel { Location = new Point(0, 200), Size = new Size(580, 56) };
         var lblCapTitle = new Label { Text = "音频捕获", Font = UiTheme.Font(10),
-            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
+            ForeColor = UiTheme.TextSecondary, Location = new Point(16, 10), AutoSize = true };
         lblCaptureInfo = new Label { Text = "Opus 64kbps", Font = UiTheme.Font(11, FontStyle.Bold),
-            ForeColor = UiTheme.TextPrimary, Location = new Point(16, 30), AutoSize = true };
+            ForeColor = UiTheme.TextPrimary, Location = new Point(16, 31), AutoSize = true };
         capCard.Controls.AddRange([lblCapTitle, lblCaptureInfo]);
         // 延迟曲线卡片
-        var latCard = new RoundedPanel { Location = new Point(0, 264), Size = new Size(580, 130) };
+        var latCard = new RoundedPanel { Location = new Point(0, 268), Size = new Size(580, 130) };
         var lblLatTitle = new Label { Text = "端到端延迟", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 4), AutoSize = true };
         latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(556, 102) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
-        // 日志区域
-        txtLog = new TextBox { Location = new Point(0, 402), Size = new Size(580, 108),
+        // 日志区域：深色区块（标题栏 + 文本框），与延迟图表呼应，权重最高
+        var logPanel = new RoundedPanel { Location = new Point(0, 410), Size = new Size(580, 138),
+            BackColor = UiTheme.ChartBg };
+        var lblLogTitle = new Label { Text = "● 实时日志", Font = UiTheme.Font(9),
+            ForeColor = Color.FromArgb(120, 200, 160), Location = new Point(14, 8), AutoSize = true };
+        txtLog = new TextBox { Location = new Point(10, 30), Size = new Size(560, 100),
             Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
             BackColor = UiTheme.ChartBg, ForeColor = Color.FromArgb(100, 220, 150),
             Font = new Font("Consolas", 9), BorderStyle = BorderStyle.None };
-        pnlServer.Controls.AddRange([lblTitle, statusCard, devCard, capCard, latCard, txtLog]);
+        logPanel.Controls.AddRange([lblLogTitle, txtLog]);
+        pnlServer.Controls.AddRange([lblTitle, titleSep, statusCard, devCard, capCard, latCard, logPanel]);
     }
 
     private void BuildPlayerPage() {
-        var lblTitle = new Label { Text = "播放器", Font = UiTheme.Font(18, FontStyle.Bold),
+        var lblTitle = new Label { Text = "播放器", Font = UiTheme.Font(20, FontStyle.Bold),
             ForeColor = UiTheme.TextPrimary, Location = new Point(0, 0), AutoSize = true };
+        var titleSep = new Panel { BackColor = UiTheme.Border, Location = new Point(0, 36), Size = new Size(580, 1) };
         // 串流状态卡片
-        var streamCard = new RoundedPanel { Location = new Point(0, 44), Size = new Size(580, 70) };
+        var streamCard = new RoundedPanel { Location = new Point(0, 48), Size = new Size(580, 70) };
         lblStreamDot = new Label { Text = "●", Font = new Font("Segoe UI", 14),
             ForeColor = UiTheme.Warning, Location = new Point(16, 22), AutoSize = true };
         lblStreamStatus = new Label { Text = "等待连接...", Font = UiTheme.Font(12, FontStyle.Bold),
@@ -264,12 +276,13 @@ public class MainForm : Form
         lblConnectedDevice = new Label { Text = "未连接任何设备", Font = UiTheme.Font(11),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 18), AutoSize = true };
         devCard.Controls.Add(lblConnectedDevice);
-        pnlPlayer.Controls.AddRange([lblTitle, streamCard, cfgCard, devCard]);
+        pnlPlayer.Controls.AddRange([lblTitle, titleSep, streamCard, cfgCard, devCard]);
     }
 
     private void BuildSettingsPage() {
-        var lblTitle = new Label { Text = "设置", Font = UiTheme.Font(18, FontStyle.Bold),
+        var lblTitle = new Label { Text = "设置", Font = UiTheme.Font(20, FontStyle.Bold),
             ForeColor = UiTheme.TextPrimary, Location = new Point(0, 0), AutoSize = true };
+        var titleSep = new Panel { BackColor = UiTheme.Border, Location = new Point(0, 36), Size = new Size(580, 1) };
         // 服务设置卡片
         var srvCard = new RoundedPanel { Location = new Point(0, 44), Size = new Size(580, 60) };
         var lblPort = new Label { Text = "端口", Font = new Font("Microsoft YaHei UI", 10),
@@ -312,7 +325,7 @@ public class MainForm : Form
             Font = UiTheme.Font(10), ForeColor = UiTheme.TextSecondary,
             Location = new Point(16, 18), AutoSize = true };
         aboutCard.Controls.Add(lblAbout);
-        pnlSettings.Controls.AddRange([lblTitle, srvCard, audCard, aboutCard]);
+        pnlSettings.Controls.AddRange([lblTitle, titleSep, srvCard, audCard, aboutCard]);
     }
 
     private void SwitchPage(int index) {

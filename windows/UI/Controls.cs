@@ -15,7 +15,7 @@ public static class UiTheme {
     public static readonly Color Danger = Color.FromArgb(239, 68, 68);
     public static readonly Color Background = Color.FromArgb(241, 245, 249);  // 窗口背景（浅灰蓝）
     public static readonly Color Card = Color.White;
-    public static readonly Color Border = Color.FromArgb(226, 232, 240);
+    public static readonly Color Border = Color.FromArgb(216, 224, 234); // 卡片/分隔线边框（微加深增强模块感）
     public static readonly Color TextPrimary = Color.FromArgb(15, 23, 42);
     public static readonly Color TextSecondary = Color.FromArgb(100, 116, 139);
     public static readonly Color InputBg = Color.FromArgb(248, 250, 252);
@@ -29,6 +29,7 @@ public static class UiTheme {
 // 圆角悬浮按钮（hover 提亮 / 按下加深）
 public class FlatButton : Button {
     public int CornerRadius { get; set; } = 8;
+    public Color BorderColor { get; set; } = Color.Transparent; // 非透明时绘制 1px 圆角描边（线性按钮）
     private bool _hover;
     private bool _pressed;
     public FlatButton() {
@@ -55,6 +56,10 @@ public class FlatButton : Button {
         else if (_hover) fill = UiTheme.Adjust(fill, 1.08f);
         using var brush = new SolidBrush(fill);
         g.FillPath(brush, path);
+        if (BorderColor.A != 0) {
+            using var pen = new Pen(BorderColor, 1);
+            g.DrawPath(pen, path);
+        }
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, ForeColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
