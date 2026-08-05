@@ -60,6 +60,7 @@ public class MainForm : Form
     private TextBox txtPortServer = new();
     private Button btnStartStop = new();
     private LatencyChartPanel latencyChart = new();
+    private RoundedPanel logCard = new();
 
     // === 播放器页控件 ===
     private Label lblStreamDot = new();
@@ -90,7 +91,7 @@ public class MainForm : Form
         // === 整体框架 ===
         this.Text = "AudioRelay";
         this.Size = new Size(800, 560);
-        this.MinimumSize = new Size(700, 480);
+        this.MinimumSize = new Size(800, 500);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.BackColor = UiTheme.Background;
         this.Font = new Font("Microsoft YaHei UI", 9.5f);
@@ -122,7 +123,7 @@ public class MainForm : Form
         // === 顶部导航栏（logo + 导航 + 窗口控制按钮，单条）===
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
-        topBar.BackColor = Color.White;
+        topBar.BackColor = UiTheme.Background; // 与窗体背景同色，融为一体
         var logoBox = new PictureBox { Image = appIcon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
             Location = new Point(20, 9), Size = new Size(34, 34) };
         var lblTitle = new Label { Text = "AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
@@ -134,21 +135,21 @@ public class MainForm : Form
             b.BorderColor = Color.Transparent;
             b.Font = UiTheme.Font(10, FontStyle.Bold);
         }
-        btnNavServer.Location = new Point(430, 9);
-        btnNavPlayer.Location = new Point(514, 9);
-        btnNavSettings.Location = new Point(598, 9);
+        btnNavServer.Location = new Point(0, 9);
+        btnNavPlayer.Location = new Point(0, 9);
+        btnNavSettings.Location = new Point(0, 9);
         btnNavServer.Click += (s, e) => SwitchPage(0);
         btnNavPlayer.Click += (s, e) => SwitchPage(1);
         btnNavSettings.Click += (s, e) => SwitchPage(2);
-        // 窗口控制按钮（最小化/最大化/关闭，与导航同一行）
-        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Location = new Point(678, 10) };
-        var btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Location = new Point(718, 10) };
-        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Location = new Point(758, 10) };
+        // 窗口控制按钮：Dock=Right 贴右缘，随窗口宽度自适应（不被遮挡）
+        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Dock = DockStyle.Right, Width = 40 };
+        var btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Dock = DockStyle.Right, Width = 40 };
+        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Dock = DockStyle.Right, Width = 40 };
         btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
         btnMax.Click += (s, e) => this.WindowState = this.WindowState == FormWindowState.Maximized
             ? FormWindowState.Normal : FormWindowState.Maximized;
         btnClose.Click += (s, e) => { _isExiting = true; Application.Exit(); };
-        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnMax, btnClose]);
+        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnClose, btnMax, btnMin]);
         // 顶栏空白区拖拽移动窗口；双击最大化/还原
         topBar.MouseDown += (s, e) => {
             ReleaseCapture();
@@ -160,14 +161,22 @@ public class MainForm : Form
         var topSep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = UiTheme.Border };
         topBar.Controls.Add(topSep);
 
-        // === 内容区 ===
-        contentPanel.Dock = DockStyle.Fill;
+        // === 内容区（绝对定位在顶栏下方，避免 Dock=Fill 被顶栏覆盖）===
+        contentPanel.Location = new Point(0, 52);
+        contentPanel.Size = new Size(ClientSize.Width, ClientSize.Height - 52);
         contentPanel.Padding = new Padding(20, 16, 20, 16);
         pnlServer.Dock = DockStyle.Fill; pnlPlayer.Dock = DockStyle.Fill; pnlSettings.Dock = DockStyle.Fill;
         BuildServerPage(); BuildPlayerPage(); BuildSettingsPage();
         contentPanel.Controls.AddRange([pnlSettings, pnlPlayer, pnlServer]);
         Controls.Add(topBar);
         Controls.Add(contentPanel);
+        // 尺寸自适应：导航按钮居中 + 日志区高度跟随窗口高度
+        this.Resize += (s, e) => {
+            contentPanel.Size = new Size(ClientSize.Width, ClientSize.Height - 52);
+            LayoutNavButtons();
+            LayoutLogArea();
+        };
+        LayoutNavButtons();
         SwitchPage(0);
 
         // === 事件注册 ===
@@ -224,7 +233,7 @@ public class MainForm : Form
 
     private void BuildServerPage() {
         // 状态横幅：状态文字 + 主操作按钮（全宽，主操作醒目蓝）
-        var banner = new RoundedPanel { Location = new Point(0, 20), Size = new Size(760, 64) };
+        var banner = new RoundedPanel { Location = new Point(0, 24), Size = new Size(760, 64) };
         lblStatusDot = new Label { Text = "●", Font = new Font("Segoe UI", 14),
             ForeColor = UiTheme.Danger, Location = new Point(20, 20), AutoSize = true };
         lblStatusText = new Label { Text = "未启动", Font = UiTheme.Font(14, FontStyle.Bold),
@@ -258,7 +267,7 @@ public class MainForm : Form
         latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(736, 156) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
         // 日志区（浅色，与整体风格一致，不突兀）
-        var logCard = new RoundedPanel { Location = new Point(0, 368), Size = new Size(760, 108) };
+        logCard = new RoundedPanel { Location = new Point(0, 368), Size = new Size(760, 108) };
         var lblLogTitle = new Label { Text = "实时日志", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
         txtLog = new TextBox { Location = new Point(10, 30), Size = new Size(740, 72),
@@ -344,6 +353,24 @@ public class MainForm : Form
             Location = new Point(16, 16), AutoSize = true };
         aboutCard.Controls.Add(lblAbout);
         pnlSettings.Controls.AddRange([srvCard, audCard, outCard, aboutCard]);
+    }
+
+    // 顶部导航按钮组：随窗口宽度水平居中（避免与右侧窗口按钮重叠）
+    private void LayoutNavButtons() {
+        int totalW = 80 * 3; // 三个 80px 导航按钮
+        int x = Math.Max(0, (topBar.Width - totalW) / 2);
+        btnNavServer.Location = new Point(x, 9);
+        btnNavPlayer.Location = new Point(x + 80, 9);
+        btnNavSettings.Location = new Point(x + 160, 9);
+    }
+
+    // 日志区高度跟随窗口高度（内容区变矮时压缩日志，避免被裁）
+    private void LayoutLogArea() {
+        int h = pnlServer.Height - 368;
+        if (h < 60) h = 60;
+        logCard.Height = h;
+        txtLog.Height = h - 38;
+        if (txtLog.Height < 40) txtLog.Height = 40;
     }
 
     private void SwitchPage(int index) {

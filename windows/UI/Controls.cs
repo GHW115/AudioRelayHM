@@ -49,6 +49,8 @@ public class FlatButton : Button {
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        // 先清除整个区域（父背景色），避免圆角外残留上一帧颜色产生边角杂色
+        g.Clear(Parent?.BackColor ?? Color.White);
         using var path = RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), CornerRadius);
         Color fill = BackColor;
         if (!Enabled) fill = Color.FromArgb(148, 163, 184);
