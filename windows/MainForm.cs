@@ -119,7 +119,7 @@ public class MainForm : Form
         };
         _notifyIcon.DoubleClick += (s, e) => RestoreFromTray();
 
-        // === 顶部导航栏（logo 图标 + 水平导航）===
+        // === 顶部导航栏（logo + 导航 + 窗口控制按钮，单条）===
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
         topBar.BackColor = Color.White;
@@ -134,13 +134,26 @@ public class MainForm : Form
             b.BorderColor = Color.Transparent;
             b.Font = UiTheme.Font(10, FontStyle.Bold);
         }
-        btnNavServer.Location = new Point(470, 9);
-        btnNavPlayer.Location = new Point(564, 9);
-        btnNavSettings.Location = new Point(658, 9);
+        btnNavServer.Location = new Point(430, 9);
+        btnNavPlayer.Location = new Point(524, 9);
+        btnNavSettings.Location = new Point(618, 9);
         btnNavServer.Click += (s, e) => SwitchPage(0);
         btnNavPlayer.Click += (s, e) => SwitchPage(1);
         btnNavSettings.Click += (s, e) => SwitchPage(2);
-        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings]);
+        // 窗口控制按钮（与导航同一行，消除"双标题栏"观感）
+        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Location = new Point(708, 10) };
+        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Location = new Point(754, 10) };
+        btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
+        btnClose.Click += (s, e) => { _isExiting = true; Application.Exit(); };
+        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnClose]);
+        // 顶栏空白区拖拽移动窗口；双击最大化/还原
+        topBar.MouseDown += (s, e) => {
+            ReleaseCapture();
+            SendMessage(this.Handle, WM_NCLBUTTONDOWN, new IntPtr(HTCAPTION), IntPtr.Zero);
+        };
+        topBar.MouseDoubleClick += (s, e) =>
+            this.WindowState = this.WindowState == FormWindowState.Maximized
+                ? FormWindowState.Normal : FormWindowState.Maximized;
         var topSep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = UiTheme.Border };
         topBar.Controls.Add(topSep);
 
@@ -150,12 +163,6 @@ public class MainForm : Form
         pnlServer.Dock = DockStyle.Fill; pnlPlayer.Dock = DockStyle.Fill; pnlSettings.Dock = DockStyle.Fill;
         BuildServerPage(); BuildPlayerPage(); BuildSettingsPage();
         contentPanel.Controls.AddRange([pnlSettings, pnlPlayer, pnlServer]);
-        // === 自绘标题栏（无边框窗体）===
-        var titleBar = new TitleBar();
-        titleBar.SetLogo(appIcon.ToBitmap());
-        titleBar.OnMinimize += () => this.WindowState = FormWindowState.Minimized;
-        titleBar.OnClose += () => { _isExiting = true; Application.Exit(); };
-        Controls.Add(titleBar);
         Controls.Add(topBar);
         Controls.Add(contentPanel);
         SwitchPage(0);
@@ -248,7 +255,7 @@ public class MainForm : Form
         latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(736, 156) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
         // 日志区（浅色，与整体风格一致，不突兀）
-        var logCard = new RoundedPanel { Location = new Point(0, 348), Size = new Size(760, 128) };
+        var logCard = new RoundedPanel { Location = new Point(0, 348), Size = new Size(760, 124) };
         var lblLogTitle = new Label { Text = "实时日志", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
         txtLog = new TextBox { Location = new Point(10, 30), Size = new Size(740, 92),
@@ -508,6 +515,14 @@ public class MainForm : Form
     // 无边框窗体：Windows 11 圆角（DWMWA_WINDOW_CORNER_PREFERENCE）
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    // 顶栏拖拽：模拟标题栏拖动
+    private const int WM_NCLBUTTONDOWN = 0xA1;
+    private const int HTCAPTION = 0x2;
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wp, IntPtr lp);
 
     // 无边框窗体保留 WS_THICKFRAME：Windows 11 只为带可调边框的窗口渲染圆角
     protected override CreateParams CreateParams {
