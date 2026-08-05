@@ -97,11 +97,6 @@ public class MainForm : Form
         this.Font = new Font("Microsoft YaHei UI", 9.5f);
         // 无边框 + 自绘标题栏（去掉系统标题栏的图标/文字）
         this.FormBorderStyle = FormBorderStyle.None;
-        this.HandleCreated += (s, e) => {
-            // Windows 11 圆角（无边框窗体默认直角）
-            int attr = 33, val = 2; // DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
-            DwmSetWindowAttribute(this.Handle, attr, ref val, sizeof(int));
-        };
 
         // === 设置图标（强制使用 AppIcon.ico）===
         var appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
@@ -175,6 +170,7 @@ public class MainForm : Form
             contentPanel.Size = new Size(ClientSize.Width, ClientSize.Height - 52);
             LayoutNavButtons();
             LayoutLogArea();
+            ApplyRoundedRegion();
         };
         LayoutNavButtons();
         SwitchPage(0);
@@ -373,6 +369,19 @@ public class MainForm : Form
         if (txtLog.Height < 40) txtLog.Height = 40;
     }
 
+    // 自绘圆角 Region（替代 WS_THICKFRAME：避免顶部 8px 白色非客户区边框）
+    private void ApplyRoundedRegion() {
+        if (WindowState == FormWindowState.Maximized) { Region = null; return; }
+        int r = 12;
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(0, 0, r * 2, r * 2, 180, 90);
+        path.AddArc(Width - r * 2 - 1, 0, r * 2, r * 2, 270, 90);
+        path.AddArc(Width - r * 2 - 1, Height - r * 2 - 1, r * 2, r * 2, 0, 90);
+        path.AddArc(0, Height - r * 2 - 1, r * 2, r * 2, 90, 90);
+        path.CloseFigure();
+        Region = new Region(path);
+    }
+
     private void SwitchPage(int index) {
         pnlServer.Visible = (index == 0);
         pnlPlayer.Visible = (index == 1);
@@ -389,6 +398,7 @@ public class MainForm : Form
     }
 
     private async void OnFormShown(object? sender, EventArgs e) {
+        ApplyRoundedRegion();
         await StartServer();
     }
 
@@ -542,7 +552,7 @@ public class MainForm : Form
         }
     }
 
-    // 无边框窗体：Windows 11 圆角（DWMWA_WINDOW_CORNER_PREFERENCE）
+    // 无边框窗体：自绘圆角 Region（见 ApplyRoundedRegion），不再使用 WS_THICKFRAME（会引入顶部白条）
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
@@ -553,15 +563,6 @@ public class MainForm : Form
     private static extern bool ReleaseCapture();
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wp, IntPtr lp);
-
-    // 无边框窗体保留 WS_THICKFRAME：Windows 11 只为带可调边框的窗口渲染圆角
-    protected override CreateParams CreateParams {
-        get {
-            var cp = base.CreateParams;
-            cp.Style |= 0x00040000; // WS_THICKFRAME
-            return cp;
-        }
-    }
 }
 
 // 网络服务
