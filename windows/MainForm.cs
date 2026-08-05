@@ -119,7 +119,8 @@ public class MainForm : Form
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
         topBar.BackColor = UiTheme.Background; // 与窗体背景同色，融为一体
-        var logoBox = new PictureBox { Image = appIcon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
+        var logoBox = new PictureBox { Image = MakeRoundedImage(appIcon.ToBitmap(), 34, 8),
+            SizeMode = PictureBoxSizeMode.Zoom, BackColor = UiTheme.Background,
             Location = new Point(20, 9), Size = new Size(34, 34) };
         var lblTitle = new Label { Text = "AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
             ForeColor = UiTheme.Primary, Location = new Point(60, 14), AutoSize = true };
@@ -170,7 +171,6 @@ public class MainForm : Form
             contentPanel.Size = new Size(ClientSize.Width, ClientSize.Height - 52);
             LayoutNavButtons();
             LayoutLogArea();
-            ApplyRoundedRegion();
         };
         LayoutNavButtons();
         SwitchPage(0);
@@ -369,17 +369,22 @@ public class MainForm : Form
         if (txtLog.Height < 40) txtLog.Height = 40;
     }
 
-    // 自绘圆角 Region（替代 WS_THICKFRAME：避免顶部 8px 白色非客户区边框）
-    private void ApplyRoundedRegion() {
-        if (WindowState == FormWindowState.Maximized) { Region = null; return; }
-        int r = 12;
+    // 生成圆角图片（用于导航栏 logo：圆角外填充背景色，视觉无缝）
+    private static Image MakeRoundedImage(Image src, int size, int radius) {
+        var bmp = new Bitmap(size, size);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var bg = new SolidBrush(UiTheme.Background))
+            g.FillRectangle(bg, 0, 0, size, size);
         using var path = new System.Drawing.Drawing2D.GraphicsPath();
-        path.AddArc(0, 0, r * 2, r * 2, 180, 90);
-        path.AddArc(Width - r * 2 - 1, 0, r * 2, r * 2, 270, 90);
-        path.AddArc(Width - r * 2 - 1, Height - r * 2 - 1, r * 2, r * 2, 0, 90);
-        path.AddArc(0, Height - r * 2 - 1, r * 2, r * 2, 90, 90);
+        path.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
+        path.AddArc(size - radius * 2 - 1, 0, radius * 2, radius * 2, 270, 90);
+        path.AddArc(size - radius * 2 - 1, size - radius * 2 - 1, radius * 2, radius * 2, 0, 90);
+        path.AddArc(0, size - radius * 2 - 1, radius * 2, radius * 2, 90, 90);
         path.CloseFigure();
-        Region = new Region(path);
+        g.SetClip(path);
+        g.DrawImage(src, 0, 0, size, size);
+        return bmp;
     }
 
     private void SwitchPage(int index) {
@@ -398,7 +403,6 @@ public class MainForm : Form
     }
 
     private async void OnFormShown(object? sender, EventArgs e) {
-        ApplyRoundedRegion();
         await StartServer();
     }
 
