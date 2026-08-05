@@ -148,7 +148,7 @@ public class LatencyChartPanel : Panel
     {
         SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer
             | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
-        BackColor = UiTheme.ChartBg;
+        BackColor = UiTheme.InputBg; // 浅色画布（与白色卡片协调）
         _timer = new System.Windows.Forms.Timer { Interval = 200 };
         _timer.Tick += (s, e) => Invalidate();
         _timer.Start();
@@ -195,7 +195,7 @@ public class LatencyChartPanel : Panel
 
         if (snapCount < 2) {
             using var nf = new Font("Microsoft YaHei UI", 9);
-            using var nb = new SolidBrush(Color.FromArgb(80, 160, 160, 180));
+            using var nb = new SolidBrush(Color.FromArgb(150, 100, 116, 139));
             g.DrawString("等待数据...", nf, nb, w / 2 - 30, h / 2 - 8);
             return;
         }
@@ -221,10 +221,10 @@ public class LatencyChartPanel : Panel
         float plotH = h - padT - padB;
 
         // 网格线
-        using var gridPen = new Pen(Color.FromArgb(30, 50, 55, 65), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+        using var gridPen = new Pen(Color.FromArgb(60, 203, 213, 225), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
         int[] gridValues = [50, 100, 200, 500];
         using var gridFont = new Font("Consolas", 7.5f);
-        using var gridBrush = new SolidBrush(Color.FromArgb(80, 140, 140, 160));
+        using var gridBrush = new SolidBrush(Color.FromArgb(150, 100, 116, 139));
         foreach (int gv in gridValues) {
             if (gv >= yMin && gv <= yMax) {
                 float gy = padT + plotH * (1f - (float)(gv - yMin) / (yMax - yMin));
@@ -259,7 +259,7 @@ public class LatencyChartPanel : Panel
         // 总线
         var pts = new PointF[snapCount];
         for (int i = 0; i < snapCount; i++) pts[i] = new PointF(X(i), Y(sTotal[i]));
-        using var linePen = new Pen(Color.FromArgb(180, 180, 220, 255), 1.5f);
+        using var linePen = new Pen(Color.FromArgb(220, 37, 99, 235), 1.5f);
         g.DrawLines(linePen, pts);
 
         // 图例 + 统计文字
@@ -269,7 +269,7 @@ public class LatencyChartPanel : Panel
         string sAvg = $"avg {avgV}ms";
         var sAvgSize = g.MeasureString(sAvg, legFont);
         lx -= sAvgSize.Width;
-        using var avgBrush = new SolidBrush(Color.FromArgb(200, 180, 220, 255));
+        using var avgBrush = new SolidBrush(Color.FromArgb(220, 15, 23, 42));
         g.DrawString(sAvg, legFont, avgBrush, lx, 2);
 
         // 分项图例
@@ -297,7 +297,7 @@ public class LatencyChartPanel : Panel
         lx -= size.Width + 14;
         using var dotBrush = new SolidBrush(color);
         g.FillRectangle(dotBrush, lx, 5, 8, 8);
-        using var textBrush = new SolidBrush(Color.FromArgb(200, 180, 200, 220));
+        using var textBrush = new SolidBrush(Color.FromArgb(220, 71, 85, 105));
         g.DrawString(text, font, textBrush, lx + 10, 2);
     }
 
@@ -311,7 +311,7 @@ public class LatencyChartPanel : Panel
 // ======================== 顶栏窗口控制按钮 ========================
 // 最小化/关闭按钮（自绘符号 + hover 反馈），嵌入顶部导航栏
 public class WinButton : Control {
-    public enum BtnType { Minimize, Close }
+    public enum BtnType { Minimize, Maximize, Close }
     public BtnType Type { get; set; } = BtnType.Minimize;
     private bool _hover;
 
@@ -332,6 +332,8 @@ public class WinButton : Control {
         int cx = Width / 2;
         if (Type == BtnType.Minimize) {
             g.DrawLine(pen, cx - 5, Height / 2, cx + 5, Height / 2);
+        } else if (Type == BtnType.Maximize) {
+            g.DrawRectangle(pen, cx - 5, Height / 2 - 5, 10, 10);
         } else {
             g.DrawLine(pen, cx - 5, Height / 2 - 5, cx + 5, Height / 2 + 5);
             g.DrawLine(pen, cx + 5, Height / 2 - 5, cx - 5, Height / 2 + 5);

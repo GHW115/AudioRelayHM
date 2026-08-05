@@ -130,22 +130,25 @@ public class MainForm : Form
         topBar.Controls.AddRange([logoBox, lblTitle]);
         btnNavServer.Text = "服务器"; btnNavPlayer.Text = "播放器"; btnNavSettings.Text = "设置";
         foreach (var b in new[] { btnNavServer, btnNavPlayer, btnNavSettings }) {
-            b.Size = new Size(88, 34);
+            b.Size = new Size(80, 34);
             b.BorderColor = Color.Transparent;
             b.Font = UiTheme.Font(10, FontStyle.Bold);
         }
         btnNavServer.Location = new Point(430, 9);
-        btnNavPlayer.Location = new Point(524, 9);
-        btnNavSettings.Location = new Point(618, 9);
+        btnNavPlayer.Location = new Point(514, 9);
+        btnNavSettings.Location = new Point(598, 9);
         btnNavServer.Click += (s, e) => SwitchPage(0);
         btnNavPlayer.Click += (s, e) => SwitchPage(1);
         btnNavSettings.Click += (s, e) => SwitchPage(2);
-        // 窗口控制按钮（与导航同一行，消除"双标题栏"观感）
-        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Location = new Point(708, 10) };
-        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Location = new Point(754, 10) };
+        // 窗口控制按钮（最小化/最大化/关闭，与导航同一行）
+        var btnMin = new WinButton { Type = WinButton.BtnType.Minimize, Location = new Point(678, 10) };
+        var btnMax = new WinButton { Type = WinButton.BtnType.Maximize, Location = new Point(718, 10) };
+        var btnClose = new WinButton { Type = WinButton.BtnType.Close, Location = new Point(758, 10) };
         btnMin.Click += (s, e) => this.WindowState = FormWindowState.Minimized;
+        btnMax.Click += (s, e) => this.WindowState = this.WindowState == FormWindowState.Maximized
+            ? FormWindowState.Normal : FormWindowState.Maximized;
         btnClose.Click += (s, e) => { _isExiting = true; Application.Exit(); };
-        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnClose]);
+        topBar.Controls.AddRange([btnNavServer, btnNavPlayer, btnNavSettings, btnMin, btnMax, btnClose]);
         // 顶栏空白区拖拽移动窗口；双击最大化/还原
         topBar.MouseDown += (s, e) => {
             ReleaseCapture();
@@ -221,7 +224,7 @@ public class MainForm : Form
 
     private void BuildServerPage() {
         // 状态横幅：状态文字 + 主操作按钮（全宽，主操作醒目蓝）
-        var banner = new RoundedPanel { Location = new Point(0, 0), Size = new Size(760, 64) };
+        var banner = new RoundedPanel { Location = new Point(0, 20), Size = new Size(760, 64) };
         lblStatusDot = new Label { Text = "●", Font = new Font("Segoe UI", 14),
             ForeColor = UiTheme.Danger, Location = new Point(20, 20), AutoSize = true };
         lblStatusText = new Label { Text = "未启动", Font = UiTheme.Font(14, FontStyle.Bold),
@@ -231,7 +234,7 @@ public class MainForm : Form
             Location = new Point(616, 15), Size = new Size(124, 34) };
         banner.Controls.AddRange([lblStatusDot, lblStatusText, btnStartStop]);
         // 双栏：设备信息 | 音频捕获
-        var devCard = new RoundedPanel { Location = new Point(0, 72), Size = new Size(370, 76) };
+        var devCard = new RoundedPanel { Location = new Point(0, 92), Size = new Size(370, 76) };
         string hostname = "Unknown"; string localIp = "0.0.0.0";
         try { hostname = Dns.GetHostName();
             var ips = Dns.GetHostAddresses(Dns.GetHostName());
@@ -242,23 +245,23 @@ public class MainForm : Form
         lblIpAddr = new Label { Text = localIp, Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 42), AutoSize = true };
         devCard.Controls.AddRange([lblHost, lblIpAddr]);
-        var capCard = new RoundedPanel { Location = new Point(390, 72), Size = new Size(370, 76) };
+        var capCard = new RoundedPanel { Location = new Point(390, 92), Size = new Size(370, 76) };
         var lblCapTitle = new Label { Text = "音频捕获", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 10), AutoSize = true };
         lblCaptureInfo = new Label { Text = "Opus 64kbps · 48kHz · 2ch", Font = UiTheme.Font(11, FontStyle.Bold),
             ForeColor = UiTheme.TextPrimary, Location = new Point(16, 32), AutoSize = true };
         capCard.Controls.AddRange([lblCapTitle, lblCaptureInfo]);
         // 延迟大图（音频工具核心视觉）
-        var latCard = new RoundedPanel { Location = new Point(0, 156), Size = new Size(760, 184) };
+        var latCard = new RoundedPanel { Location = new Point(0, 176), Size = new Size(760, 184) };
         var lblLatTitle = new Label { Text = "端到端延迟", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 4), AutoSize = true };
         latencyChart = new LatencyChartPanel { Location = new Point(12, 22), Size = new Size(736, 156) };
         latCard.Controls.AddRange([lblLatTitle, latencyChart]);
         // 日志区（浅色，与整体风格一致，不突兀）
-        var logCard = new RoundedPanel { Location = new Point(0, 348), Size = new Size(760, 124) };
+        var logCard = new RoundedPanel { Location = new Point(0, 368), Size = new Size(760, 108) };
         var lblLogTitle = new Label { Text = "实时日志", Font = UiTheme.Font(10),
             ForeColor = UiTheme.TextSecondary, Location = new Point(16, 8), AutoSize = true };
-        txtLog = new TextBox { Location = new Point(10, 30), Size = new Size(740, 92),
+        txtLog = new TextBox { Location = new Point(10, 30), Size = new Size(740, 72),
             Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
             BackColor = Color.White, ForeColor = Color.FromArgb(51, 65, 85),
             Font = new Font("Consolas", 9), BorderStyle = BorderStyle.None };
