@@ -94,6 +94,13 @@ public class MainForm : Form
         this.StartPosition = FormStartPosition.CenterScreen;
         this.BackColor = UiTheme.Background;
         this.Font = new Font("Microsoft YaHei UI", 9.5f);
+        // 无边框 + 自绘标题栏（去掉系统标题栏的图标/文字）
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.HandleCreated += (s, e) => {
+            // Windows 11 圆角（无边框窗体默认直角）
+            int attr = 33, val = 2; // DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
+            DwmSetWindowAttribute(this.Handle, attr, ref val, sizeof(int));
+        };
 
         // === 设置图标（强制使用 AppIcon.ico）===
         var appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
@@ -112,13 +119,15 @@ public class MainForm : Form
         };
         _notifyIcon.DoubleClick += (s, e) => RestoreFromTray();
 
-        // === 顶部导航栏（logo + 水平导航）===
+        // === 顶部导航栏（logo 图标 + 水平导航）===
         topBar.Dock = DockStyle.Top;
         topBar.Height = 52;
         topBar.BackColor = Color.White;
-        var lblTitle = new Label { Text = "♬ AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
-            ForeColor = UiTheme.Primary, Location = new Point(20, 14), AutoSize = true };
-        topBar.Controls.Add(lblTitle);
+        var logoBox = new PictureBox { Image = appIcon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
+            Location = new Point(20, 9), Size = new Size(34, 34) };
+        var lblTitle = new Label { Text = "AudioRelay", Font = UiTheme.Font(15, FontStyle.Bold),
+            ForeColor = UiTheme.Primary, Location = new Point(60, 14), AutoSize = true };
+        topBar.Controls.AddRange([logoBox, lblTitle]);
         btnNavServer.Text = "服务器"; btnNavPlayer.Text = "播放器"; btnNavSettings.Text = "设置";
         foreach (var b in new[] { btnNavServer, btnNavPlayer, btnNavSettings }) {
             b.Size = new Size(88, 34);
@@ -141,8 +150,14 @@ public class MainForm : Form
         pnlServer.Dock = DockStyle.Fill; pnlPlayer.Dock = DockStyle.Fill; pnlSettings.Dock = DockStyle.Fill;
         BuildServerPage(); BuildPlayerPage(); BuildSettingsPage();
         contentPanel.Controls.AddRange([pnlSettings, pnlPlayer, pnlServer]);
-        Controls.Add(contentPanel);
+        // === 自绘标题栏（无边框窗体）===
+        var titleBar = new TitleBar();
+        titleBar.SetLogo(appIcon.ToBitmap());
+        titleBar.OnMinimize += () => this.WindowState = FormWindowState.Minimized;
+        titleBar.OnClose += () => { _isExiting = true; Application.Exit(); };
+        Controls.Add(titleBar);
         Controls.Add(topBar);
+        Controls.Add(contentPanel);
         SwitchPage(0);
 
         // === 事件注册 ===
@@ -487,6 +502,19 @@ public class MainForm : Form
         base.OnResize(e);
         if (this.WindowState == FormWindowState.Minimized) {
             this.Hide();
+        }
+    }
+
+    // 无边框窗体：Windows 11 圆角（DWMWA_WINDOW_CORNER_PREFERENCE）
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    // 无边框窗体保留 WS_THICKFRAME：Windows 11 只为带可调边框的窗口渲染圆角
+    protected override CreateParams CreateParams {
+        get {
+            var cp = base.CreateParams;
+            cp.Style |= 0x00040000; // WS_THICKFRAME
+            return cp;
         }
     }
 }

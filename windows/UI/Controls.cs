@@ -307,3 +307,85 @@ public class LatencyChartPanel : Panel
         base.Dispose(disposing);
     }
 }
+
+// ======================== 自绘标题栏 ========================
+// 无边框窗体（FormBorderStyle=None）的标题栏：logo + 标题 + 最小化/关闭按钮 + 拖拽
+public class TitleBar : Panel {
+    public event Action? OnMinimize;
+    public event Action? OnClose;
+    private const int BtnW = 46;
+    private bool _hoverMin, _hoverClose;
+    private Image? _logo;
+
+    public TitleBar() {
+        Height = 32;
+        Dock = DockStyle.Top;
+        BackColor = Color.White;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+    }
+
+    public void SetLogo(Image logo) => _logo = logo;
+
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        // 左侧：logo + 应用名
+        if (_logo != null) g.DrawImage(_logo, new Rectangle(12, 8, 16, 16));
+        TextRenderer.DrawText(g, "AudioRelay", UiTheme.Font(9), new Point(34, 9),
+            Color.FromArgb(71, 85, 105), TextFormatFlags.NoPadding);
+        // 右侧：最小化按钮
+        int x = Width - BtnW * 2;
+        using (var b = new SolidBrush(_hoverMin ? UiTheme.Hover : Color.Transparent))
+            g.FillRectangle(b, x, 0, BtnW, Height);
+        using (var pen = new Pen(_hoverMin ? UiTheme.TextPrimary : Color.FromArgb(148, 163, 184), 1.4f))
+            g.DrawLine(pen, x + BtnW / 2 - 5, Height / 2, x + BtnW / 2 + 5, Height / 2);
+        // 关闭按钮
+        x += BtnW;
+        using (var b = new SolidBrush(_hoverClose ? UiTheme.Danger : Color.Transparent))
+            g.FillRectangle(b, x, 0, BtnW, Height);
+        using (var pen2 = new Pen(_hoverClose ? Color.White : Color.FromArgb(148, 163, 184), 1.4f)) {
+            g.DrawLine(pen2, x + BtnW / 2 - 5, Height / 2 - 5, x + BtnW / 2 + 5, Height / 2 + 5);
+            g.DrawLine(pen2, x + BtnW / 2 + 5, Height / 2 - 5, x + BtnW / 2 - 5, Height / 2 + 5);
+        }
+        // 底部 1px 分隔线
+        using var sep = new Pen(UiTheme.Border, 1);
+        g.DrawLine(sep, 0, Height - 1, Width, Height - 1);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e) {
+        bool hMin = e.X >= Width - BtnW * 2 && e.X < Width - BtnW;
+        bool hClose = e.X >= Width - BtnW;
+        if (hMin != _hoverMin || hClose != _hoverClose) { _hoverMin = hMin; _hoverClose = hClose; Invalidate(); }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) {
+        if (_hoverMin || _hoverClose) { _hoverMin = _hoverClose = false; Invalidate(); }
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e) {
+        if (e.Button != MouseButtons.Left) { base.OnMouseDown(e); return; }
+        int x = e.X;
+        if (x >= Width - BtnW) { OnClose?.Invoke(); return; }
+        if (x >= Width - BtnW * 2) { OnMinimize?.Invoke(); return; }
+        // 其余区域：拖拽窗口
+        ReleaseCapture();
+        SendMessage(FindForm()?.Handle ?? IntPtr.Zero, WM_NCLBUTTONDOWN, new IntPtr(HTCAPTION), IntPtr.Zero);
+        base.OnMouseDown(e);
+    }
+
+    protected override void OnDoubleClick(EventArgs e) {
+        var f = FindForm();
+        if (f != null)
+            f.WindowState = f.WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+        base.OnDoubleClick(e);
+    }
+
+    private const int WM_NCLBUTTONDOWN = 0xA1;
+    private const int HTCAPTION = 0x2;
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wp, IntPtr lp);
+}
